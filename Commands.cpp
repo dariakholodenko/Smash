@@ -198,14 +198,14 @@ void ExternalCommand::execute() {
 	}
 	
 	if(pid == 0) {
-				
+		setpgrp();
 		execvp("/bin/bash", paramlist);
 		
 		perror("smash error: executioin failed\n");
 		kill(getpid(), SIGKILL);
 	}
 	else {
-		wait(NULL);
+		waitpid(pid, NULL, WUNTRACED); //WUNTRACED in case the child gets stopped.
 	}
 	
 	free(arg);
