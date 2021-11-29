@@ -78,22 +78,25 @@ void _removeBackgroundSign(char* cmd_line) {
   cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-//Implementation of the classes in Commands.h=========================
-
+//====================Commands Implementation===========================
 Command::Command(const char* cmd_line) : cmd_line(cmd_line) {
     num_args = _parseCommandLine(cmd_line, args);
 }
 
 Command::~Command() {}
 
-BuiltInCommand::BuiltInCommand(const char* cmd_line) : Command(cmd_line) {
+//====================BuiltIn Commands Implementation===================
+BuiltInCommand::BuiltInCommand(const char* cmd_line) 
+	: Command(cmd_line) {
     //see piazza @49_
     _removeBackgroundSign(args[0]);
 }
 
-ShowPidCommand::ShowPidCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {} 
+ShowPidCommand::ShowPidCommand(const char* cmd_line) 
+										: BuiltInCommand(cmd_line) {} 
 
-GetCurrDirCommand::GetCurrDirCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {} 
+GetCurrDirCommand::GetCurrDirCommand(const char* cmd_line) 
+										: BuiltInCommand(cmd_line) {} 
 
 
 ChangePromptCommand::ChangePromptCommand(const char* cmd_line, SmallShell *cur_shell)
@@ -176,8 +179,39 @@ void ChangeDirCommand::execute() {
     }
 }
 
+//=====================External Commands Implementation=================
 
-//class SmallShell==============================
+ExternalCommand::ExternalCommand(const char* cmd_line) 
+												: Command(cmd_line) {}
+												
+void ExternalCommand::execute() {
+	
+	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
+	strcpy(arg, cmd_line);
+	
+	char* const paramlist[] = {"bash", "-c", arg, NULL};
+	
+	int pid = fork();
+	
+	if(pid == -1) {
+		perror("smash error: Failed forking a child command\n");
+	}
+	
+	if(pid == 0) {
+				
+		execvp("/bin/bash", paramlist);
+		
+		perror("smash error: executioin failed\n");
+		kill(getpid(), SIGKILL);
+	}
+	else {
+		wait(NULL);
+	}
+	
+	free(arg);
+}										
+
+//===========================SmallShell=================================
 
 SmallShell::SmallShell() : prompt("smash"), lastPwd("") {}
 
@@ -190,17 +224,10 @@ SmallShell::~SmallShell() {
 */
 
 Command * SmallShell::CreateCommand(const char* cmd_line) {
-	// For example:
+	
+	string cmd_s = _trim(string(cmd_line));
+	string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
 
-  string cmd_s = _trim(string(cmd_line));
-  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-  string temp = cmd_s.substr(firstWord.length()
-										, cmd_s.find_last_of(" \n"));
-  temp = _trim(temp);
-  size_t end = temp.find_first_of(WHITESPACE);
-//  string secondWord = (end == std::string::npos)
-//										? temp : temp.substr(0, end);
-//
 	if (firstWord.compare("chprompt") == 0) {
         return new ChangePromptCommand(cmd_line, this);
 	}
@@ -215,14 +242,15 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
   }
   //else if ...
   //.....
-  //else {
-  //  return new ExternalCommand(cmd_line);
-  //}
+  else {
+    return new ExternalCommand(cmd_line);
+  }
   
   return nullptr;
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
+	
 	Command* cmd = CreateCommand(cmd_line);
 	
 	if(cmd != nullptr) {
