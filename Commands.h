@@ -11,7 +11,10 @@ using namespace std;
 
 class Command {
 // TODO: Add your data members
+protected:
 	const char* cmd_line;
+    int num_args = 0;
+    char* args[COMMAND_MAX_ARGS];
  public:
   Command(const char* cmd_line);
   virtual ~Command();
@@ -53,24 +56,23 @@ class RedirectionCommand : public Command {
 };
 
 
-class ChangeDirCommand : public BuiltInCommand {
-// TODO: Add your data members public:
-  ChangeDirCommand(const char* cmd_line, char** plastPwd);
-  virtual ~ChangeDirCommand() {}
-  void execute() override;
-};
-
 class SmallShell;
 
-class ChangePrompt : public BuiltInCommand {
-	char* cmd_line;
-	string new_prompt;
-	
-	public: 
-  ChangePrompt(const char* cmd_line, string new_prompt);
-  virtual ~ChangePrompt() {}
-  void execute() override;
-  void execute(SmallShell& s);
+class ChangePromptCommand : public BuiltInCommand {
+    SmallShell* shell;
+
+public:
+    ChangePromptCommand(const char* cmd_line, SmallShell *cur_shell);
+    virtual ~ChangePromptCommand() {}
+    void execute() override;
+};
+
+class ChangeDirCommand : public BuiltInCommand {
+public:
+    SmallShell* shell;
+    ChangeDirCommand(const char* cmd_line, SmallShell *pshell);
+    virtual ~ChangeDirCommand();
+    void execute() override;
 };
 
 class GetCurrDirCommand : public BuiltInCommand {
@@ -88,15 +90,13 @@ class ShowPidCommand : public BuiltInCommand {
 };
 
 class JobsList;
+
 class QuitCommand : public BuiltInCommand {
 // TODO: Add your data members public:
   QuitCommand(const char* cmd_line, JobsList* jobs);
   virtual ~QuitCommand() {}
   void execute() override;
 };
-
-
-
 
 class JobsList {
  public:
@@ -117,7 +117,6 @@ class JobsList {
   JobEntry *getLastStoppedJob(int *jobId);
   // TODO: Add extra methods or modify exisitng ones as needed
 };
-
 class JobsCommand : public BuiltInCommand {
  // TODO: Add your data members
  public:
@@ -125,6 +124,9 @@ class JobsCommand : public BuiltInCommand {
   virtual ~JobsCommand() {}
   void execute() override;
 };
+
+
+
 
 class KillCommand : public BuiltInCommand {
  // TODO: Add your data members
@@ -157,12 +159,11 @@ class HeadCommand : public BuiltInCommand {
   void execute() override;
 };
 
-
 class SmallShell {
  private:
   // TODO: Add your data members
   string prompt;
-  
+  string lastPwd;
   SmallShell();
  public:
   Command *CreateCommand(const char* cmd_line);
@@ -179,7 +180,11 @@ class SmallShell {
   // TODO: add extra methods as needed
   string getPrompt();
   void setNewPrompt(string new_prompt);
-  
+  string getLastPwd();
+  void setLastPwd(string new_last_pwd);
+
 };
+
+
 
 #endif //SMASH_COMMAND_H_
