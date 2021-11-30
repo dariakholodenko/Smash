@@ -2,6 +2,7 @@
 #include <string.h>
 #include <iostream>
 #include <vector>
+#include <time.h>
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
@@ -78,48 +79,153 @@ void _removeBackgroundSign(char* cmd_line) {
   cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-//Implementation of the classes in Commands.h=========================
-
-Command::Command(const char* cmd_line) : cmd_line(cmd_line) {}
+//====================Commands Implementation===========================
+Command::Command(const char* cmd_line) : cmd_line(cmd_line) {
+    num_args = _parseCommandLine(cmd_line, args);
+}
 
 Command::~Command() {}
 
-BuiltInCommand::BuiltInCommand(const char* cmd_line) : Command(cmd_line) {}
-
-ShowPidCommand::ShowPidCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {} 
-
-GetCurrDirCommand::GetCurrDirCommand(const char* cmd_line) : BuiltInCommand(cmd_line) {} 
-
-
-ChangePrompt::ChangePrompt(const char* cmd_line, string new_prompt)
-		: BuiltInCommand(cmd_line), new_prompt(new_prompt) {}
-
-void ChangePrompt::execute() {}
-
-void ChangePrompt::execute(SmallShell& s) {
-	if(new_prompt.compare("") != 0) {
-		s.SmallShell::setNewPrompt(new_prompt);
-	}
-	else {
-		s.SmallShell::setNewPrompt("smash");
-	}
+//====================BuiltIn Commands Implementation===================
+BuiltInCommand::BuiltInCommand(const char* cmd_line) 
+	: Command(cmd_line) {
+    //see piazza @49_
+    for (int i = 0; i < num_args; ++i) {
+        _removeBackgroundSign(args[i]);
+    }
 }
+
+ChangePromptCommand::ChangePromptCommand(const char* cmd_line, SmallShell *cur_shell)
+        : BuiltInCommand(cmd_line) {
+    shell = cur_shell;
+}
+
+void ChangePromptCommand::execute() {
+    if (num_args == 1) {
+        if (shell->getPrompt() != "smash") {
+            shell->setNewPrompt("smash");
+        }
+    } else if (num_args == 2) {
+        shell->setNewPrompt(args[1]);
+    }
+}
+
+ShowPidCommand::ShowPidCommand(const char* cmd_line)
+										: BuiltInCommand(cmd_line) {}
+
+void ShowPidCommand::execute() {
+    int pid = getpid();
+    if (pid < 0){
+        perror("smash error: getpid failed");
+    } else{
+        std::cout<< "smash pid is "<< getpid() << std::endl;
+    }
+}
+
+GetCurrDirCommand::GetCurrDirCommand(const char* cmd_line)
+										: BuiltInCommand(cmd_line) {}
 
 void GetCurrDirCommand::execute() {
     char buffer[MAX_COMMAND_LENGTH];
     if(getcwd(buffer,sizeof(buffer))!= NULL) {
-         std::cout<< buffer << std::endl;
-      }
+        std::cout<< buffer << std::endl;
+    } else{
+        perror("smash error: getcwd failed");
+    }
 }
 
-void ShowPidCommand::execute() {
-	std::cout<< "smash pid is "<< getpid() << std::endl;
+ChangeDirCommand::ChangeDirCommand(const char *cmd_line, SmallShell *pshell)
+        : BuiltInCommand(cmd_line){
+    shell = pshell;
 }
 
-//class SmallShell==============================
+ChangeDirCommand::~ChangeDirCommand() {
 
-SmallShell::SmallShell() : prompt("smash") {}
-// TODO: add your implementation
+}
+
+
+
+void ChangeDirCommand::execute() {
+
+    char buf[COMMAND_ARGS_MAX_LENGTH];
+    getcwd(buf,COMMAND_ARGS_MAX_LENGTH);
+    if (!buf) {
+        perror("smash error: getcwd failed");
+    }
+
+    if (num_args == 2){
+        if (strcmp(args[1],"-") == 0){
+            // go to last directory left with cd
+            //cd was not used
+            if (shell->getLastPwd().empty()){
+                perror("smash error: cd: OLDPWD not set");
+            } else {
+                //cd was used
+                if (chdir(shell->getLastPwd().c_str()) < 0){
+                    perror("smash error: chdir failed");
+                } else{
+                    shell->setLastPwd(buf);
+                }
+            }
+        } else if (strcmp(args[1],"..") == 0){
+            //go back to father
+            if (chdir("..") < 0){
+                perror("smash error: chdir failed");
+            } else{
+                shell->setLastPwd(buf);
+            }
+        }
+        else{
+            //regular change
+            shell->setLastPwd(buf);
+            if (chdir(args[1]) < 0){
+                //reset last pd for failure at the moment because I save it before the change
+                perror("smash error: chdir failed");
+                shell->setLastPwd("");
+            }
+        }
+
+    }else if (num_args > 2){
+        perror("smash error: cd: too many arguments");
+    }
+}
+
+//=====================External Commands Implementation=================
+
+ExternalCommand::ExternalCommand(const char* cmd_line) 
+												: Command(cmd_line) {}
+												
+void ExternalCommand::execute() {
+	
+	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
+	strcpy(arg, cmd_line);
+	
+	char* const paramlist[] = {"bash", "-c", arg, NULL};
+	
+	int pid = fork();
+	
+	if(pid == -1) {
+		perror("smash error: Failed forking a child command\n");
+	}
+	
+	if(pid == 0) {
+		setpgrp();
+		execvp("/bin/bash", paramlist);
+		
+		perror("smash error: executioin failed\n");
+		kill(getpid(), SIGKILL);
+	}
+	else {
+		waitpid(pid, NULL, WUNTRACED); //WUNTRACED in case the child gets stopped.
+	}
+	
+	free(arg);
+}										
+
+//===========================SmallShell=================================
+
+SmallShell::SmallShell() : prompt("smash"), lastPwd("") {
+}
 
 SmallShell::~SmallShell() {
 // TODO: add your implementation
@@ -130,47 +236,40 @@ SmallShell::~SmallShell() {
 */
 
 Command * SmallShell::CreateCommand(const char* cmd_line) {
-	// For example:
-
-  string cmd_s = _trim(string(cmd_line));
-  string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-  string temp = cmd_s.substr(firstWord.length()
-										, cmd_s.find_last_of(" \n"));
-  temp = _trim(temp);
-  size_t end = temp.find_first_of(WHITESPACE);
-  string secondWord = (end == std::string::npos) 
-										? temp : temp.substr(0, end);
-  
-	if (firstWord.compare("chprompt") == 0) {
 	
-	return new ChangePrompt(cmd_line, secondWord);
+	string cmd_s = _trim(string(cmd_line));
+	string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+
+	if (firstWord.compare("chprompt") == 0) {
+        return new ChangePromptCommand(cmd_line, this);
 	}
 	if (firstWord.compare("showpid") == 0) {
-	return new ShowPidCommand(cmd_line);
+        return new ShowPidCommand(cmd_line);
 	}
 	else if (firstWord.compare("pwd") == 0) {
-	return new GetCurrDirCommand(cmd_line);
+        return new GetCurrDirCommand(cmd_line);
 	}
-  //else if (firstWord.compare("cd") == 0) {
-  //  return new ChangeDirCommand(cmd_line, );
-  //}
+    else if (firstWord.compare("cd") == 0) {
+        return new ChangeDirCommand(cmd_line, this);
+    }
+    else if (firstWord.compare("jobs") == 0) {
+        return new JobsCommand(cmd_line, jobsList);
+    }
   //else if ...
   //.....
-  //else {
-  //  return new ExternalCommand(cmd_line);
-  //}
+  else {
+    return new ExternalCommand(cmd_line);
+  }
   
   return nullptr;
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
+	
 	Command* cmd = CreateCommand(cmd_line);
 	
-	if(strcmp(cmd_line, "chprompt") == 0) {
-		((ChangePrompt*)cmd)->execute(*this);
-	}
-	else {
-		cmd->execute();
+	if(cmd != nullptr) {
+        cmd->execute();
 	}
 	//Please note that you must fork smash process for some commands (e.g., external commands....)
 }
@@ -181,4 +280,57 @@ string SmallShell::getPrompt() {
 
 void SmallShell::setNewPrompt(string new_prompt) {
 	prompt = new_prompt;
+}
+
+string SmallShell::getLastPwd() {
+    return lastPwd;
+}
+
+void SmallShell::setLastPwd(string new_last_pwd) {
+    lastPwd = new_last_pwd;
+}
+
+//===========================Jobs List Implementation=================================
+JobsList::JobsList() {
+    for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
+        jobs_list[i].jobId = 0;
+    }
+}
+
+JobsList::~JobsList() {
+
+}
+
+void JobsList::addJob(Command *cmd, bool isStopped) {
+
+}
+
+void JobsList::printJobsList() {
+    if (jobs_list == nullptr){
+        return;
+    }
+    for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
+        if (jobs_list[i].jobId != 0){
+            cout << jobs_list[i];
+        }
+    }
+}
+
+ostream &operator<<(ostream &out, const JobsList::JobEntry &je) {
+    out << je.jobId << " " << je.command->getCommandLine() <<": "
+        << je.pid << " " << difftime(je.startTime,time(nullptr));
+    if (je.isStopped){
+        out << " (stopped)";
+    }
+    out << endl;
+    return out;
+}
+
+JobsCommand::JobsCommand(const char *cmd_line, JobsList *jobs):
+        BuiltInCommand(cmd_line) {
+    jl = jobs;
+}
+
+void JobsCommand::execute() {
+    jl->printJobsList();
 }
