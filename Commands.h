@@ -123,6 +123,7 @@ class JobsList {
 private:
     //if job id is 0 => no running job at [i] location
     JobEntry jobs_list[MAX_COMMANDS +1];
+    int num_entries;
  public:
   JobsList();
   ~JobsList();
@@ -130,25 +131,24 @@ private:
   void printJobsList();
   void killAllJobs();
   void removeFinishedJobs();
-  JobEntry * getJobById(int jobId);
-  void removeJobById(int jobId);
+  JobEntry *getJobById(int jobId, string commandType);
+  void removeJobById(int jobId, string commandType);
   JobEntry * getLastJob(int* lastJobId);
   JobEntry *getLastStoppedJob(int *jobId);
+
     // TODO: Add extra methods or modify exisitng ones as needed
+
 };
 class JobsCommand : public BuiltInCommand {
     JobsList* jl;
  public:
   JobsCommand(const char* cmd_line, JobsList* jobs);
-  ~JobsCommand() override {}
+  ~JobsCommand() {}
   void execute() override;
 };
 
-
-
-
 class KillCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
  public:
   KillCommand(const char* cmd_line, JobsList* jobs);
   virtual ~KillCommand() {}

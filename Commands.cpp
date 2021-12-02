@@ -224,7 +224,8 @@ void ExternalCommand::execute() {
 
 //===========================SmallShell=================================
 
-SmallShell::SmallShell() : prompt("smash"), lastPwd("") {
+SmallShell::SmallShell() :prompt("smash"), lastPwd("") {
+    jobsList = new JobsList();
 }
 
 SmallShell::~SmallShell() {
@@ -255,6 +256,9 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     else if (firstWord.compare("jobs") == 0) {
         return new JobsCommand(cmd_line, jobsList);
     }
+    else if (firstWord.compare("kill") == 0) {
+        return new KillCommand(cmd_line, jobsList);
+    }
   //else if ...
   //.....
   else {
@@ -274,6 +278,9 @@ void SmallShell::executeCommand(const char *cmd_line) {
 	//Please note that you must fork smash process for some commands (e.g., external commands....)
 }
 
+
+//===========================Built-in Implementation=================================
+
 string SmallShell::getPrompt() {
 	return prompt;
 }
@@ -292,9 +299,15 @@ void SmallShell::setLastPwd(string new_last_pwd) {
 
 //===========================Jobs List Implementation=================================
 JobsList::JobsList() {
+    //init
     for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
         jobs_list[i].jobId = 0;
+        jobs_list[i].command = nullptr;
+        jobs_list[i].pid = 0;
+        jobs_list[i].startTime = 0;
+        jobs_list[i].isStopped = false;
     }
+    num_entries = 0;
 }
 
 JobsList::~JobsList() {
@@ -302,13 +315,61 @@ JobsList::~JobsList() {
 }
 
 void JobsList::addJob(Command *cmd, bool isStopped) {
+    if (num_entries == MAX_COMMANDS) perror("smash error: job list is full");
 
+    for (int i = 1; i < MAX_COMMANDS + 1; ++i) {
+        //find first empty space
+        if (jobs_list[i].jobId == 0){
+            jobs_list[i].jobId = i;
+            jobs_list[i].command = cmd;
+            //TODO get pid of added job this is wrong.
+            jobs_list[i].pid = i;
+            jobs_list[i].startTime = time(nullptr);
+            jobs_list[i].isStopped = isStopped;
+            num_entries++;
+            return;
+        }
+    }
+
+}
+static void printIdErrorMessage(int jobId, string commandType) {
+    string message = "smash error: ";
+    string str = ": job-id ";
+    string  sjobid = to_string(jobId);
+    string  end = " does not exist";
+    message += commandType += str  += sjobid += end;
+    perror(message.c_str());
+}
+
+JobsList::JobEntry *JobsList::getJobById(int jobId, string commandType) {
+    if (jobId < 1 || num_entries == 0) {
+        return nullptr;
+    }
+    if (jobs_list[jobId].jobId == 0){
+        return nullptr;
+    } else{
+        return &jobs_list[jobId];
+    }
+}
+
+void JobsList::removeJobById(int jobId, string commandType) {
+    if (jobs_list[jobId].jobId == 0){
+        printIdErrorMessage(jobId, commandType);
+
+    } else{
+        //Reset
+        jobs_list[jobId].jobId = 0;
+        jobs_list[jobId].command = nullptr;
+        jobs_list[jobId].pid = 0;
+        jobs_list[jobId].startTime = 0;
+        jobs_list[jobId].isStopped = false;
+        num_entries--;
+    }
 }
 
 void JobsList::printJobsList() {
-    if (jobs_list == nullptr){
-        return;
-    }
+    //empty
+    if (num_entries == 0) return;
     for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
         if (jobs_list[i].jobId != 0){
             cout << jobs_list[i];
@@ -326,6 +387,26 @@ ostream &operator<<(ostream &out, const JobsList::JobEntry &je) {
     return out;
 }
 
+JobsList::JobEntry *JobsList::getLastJob(int *lastJobId) {
+    for (int i = MAX_COMMANDS; i > 0 ; --i) {
+        if (jobs_list[i].jobId != 0){
+            *lastJobId = i;
+            return &jobs_list[i];
+        }
+    }
+    return nullptr;
+}
+
+JobsList::JobEntry *JobsList::getLastStoppedJob(int *jobId) {
+    for (int i = MAX_COMMANDS; i > 0 ; --i) {
+        if (jobs_list[i].jobId != 0 && jobs_list->isStopped){
+            *jobId = i;
+            return &jobs_list[i];
+        }
+    }
+    return nullptr;
+}
+
 JobsCommand::JobsCommand(const char *cmd_line, JobsList *jobs):
         BuiltInCommand(cmd_line) {
     jl = jobs;
@@ -333,4 +414,54 @@ JobsCommand::JobsCommand(const char *cmd_line, JobsList *jobs):
 
 void JobsCommand::execute() {
     jl->printJobsList();
+}
+
+//===========================Kill command Implementation=================================
+
+KillCommand::KillCommand(const char *cmd_line, JobsList *jobs):
+        BuiltInCommand(cmd_line){
+    jl = jobs;
+}
+
+void KillCommand::execute() {
+    //argument checks
+    if (num_args != 3){
+        perror("smash error: kill: invalid arguments");
+        return;
+    }
+    string str_sig_num = args[1];
+    int n =str_sig_num.length();
+    //sig num should be -N or -NN where N-NN is 0-31
+    if (n < 2 || n > 3){
+        perror("smash error: kill: invalid arguments");
+        return;
+    }else{
+        if (str_sig_num[0] != '-'){
+            perror("smash error: kill: invalid arguments");
+            return;
+        } else{
+            str_sig_num.erase(0,1);
+        }
+
+    }
+    int jobId = atoi(args[2]);
+    if (jobId < 1 || jobId > 100 ||
+            stoi(str_sig_num) < 0 || stoi(str_sig_num) > 31){
+        printIdErrorMessage(jobId, "kill");
+        return;
+    }
+    //getJobById returns null if can't find job id for any reason
+    JobsList::JobEntry* je = jl->getJobById(jobId, "kill");
+    if (je == nullptr){
+        printIdErrorMessage(jobId, "kill");
+        return;
+    }
+    //send kill syscall and check for success
+    if (kill(je->pid, stoi(str_sig_num)) < 0){
+        perror("smash error: kill failed");
+        return;
+    } else{
+        cout << "signal number " << str_sig_num
+        << "was sent to pid " << je->pid << endl;
+    }
 }
