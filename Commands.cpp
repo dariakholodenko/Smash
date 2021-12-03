@@ -84,7 +84,11 @@ Command::Command(const char* cmd_line) : cmd_line(cmd_line) {
     num_args = _parseCommandLine(cmd_line, args);
 }
 
-Command::~Command() {}
+Command::~Command() {
+    for (int i = 0; i < num_args; ++i) {
+        free(args[i]);
+    }
+}
 
 //====================BuiltIn Commands Implementation===================
 BuiltInCommand::BuiltInCommand(const char* cmd_line) 
@@ -192,11 +196,15 @@ void ChangeDirCommand::execute() {
 
 //=====================External Commands Implementation=================
 
-ExternalCommand::ExternalCommand(const char* cmd_line) 
-												: Command(cmd_line) {}
-												
+ExternalCommand::ExternalCommand(const char *cmd_line, JobsList *jobs)
+												: Command(cmd_line) {
+    jl = jobs;
+}
+
 void ExternalCommand::execute() {
-	
+	//TODO external command works in the foreground, need to
+    //TODO implement background work, all of which are added
+    //TODO to jobs list using addJob(this,pid,isstopped = false)
 	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
 	strcpy(arg, cmd_line);
 	
@@ -209,14 +217,24 @@ void ExternalCommand::execute() {
 	}
 	
 	if(pid == 0) {
+        int cpid = getpid();
+        if (cpid < 0){
+            perror("smash error: getpid failed");
+        }
+        jl->addJob(this, 0, cpid);
 		setpgrp();
 		execvp("/bin/bash", paramlist);
 		
 		perror("smash error: executioin failed\n");
-		kill(getpid(), SIGKILL);
+		if (kill(cpid, SIGKILL) < 0){
+            perror("smash error: kill failed");
+        }
 	}
 	else {
-		waitpid(pid, NULL, WUNTRACED); //WUNTRACED in case the child gets stopped.
+        //WUNTRACED in case the child gets stopped.
+        if(waitpid(pid, NULL, WUNTRACED) < 0){
+            perror("smash error: waitpid failed");
+        }
 	}
 	
 	free(arg);
@@ -259,10 +277,20 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     else if (firstWord.compare("kill") == 0) {
         return new KillCommand(cmd_line, jobsList);
     }
-  //else if ...
+    else if (firstWord.compare("fg") == 0) {
+        return new ForegroundCommand(cmd_line, jobsList);
+    }
+    else if (firstWord.compare("bg") == 0) {
+        return new BackgroundCommand(cmd_line, jobsList);
+    }
+    else if (firstWord.compare("quit") == 0) {
+        return new QuitCommand(cmd_line, jobsList);
+    }
+
+        //else if ...
   //.....
   else {
-    return new ExternalCommand(cmd_line);
+    return new ExternalCommand(cmd_line, nullptr);
   }
   
   return nullptr;
@@ -275,6 +303,7 @@ void SmallShell::executeCommand(const char *cmd_line) {
 	if(cmd != nullptr) {
         cmd->execute();
 	}
+    delete cmd;
 	//Please note that you must fork smash process for some commands (e.g., external commands....)
 }
 
@@ -314,7 +343,7 @@ JobsList::~JobsList() {
 
 }
 
-void JobsList::addJob(Command *cmd, bool isStopped) {
+void JobsList::addJob(Command *cmd, int pid, bool isStopped) {
     if (num_entries == MAX_COMMANDS) perror("smash error: job list is full");
 
     for (int i = 1; i < MAX_COMMANDS + 1; ++i) {
@@ -323,7 +352,7 @@ void JobsList::addJob(Command *cmd, bool isStopped) {
             jobs_list[i].jobId = i;
             jobs_list[i].command = cmd;
             //TODO get pid of added job this is wrong.
-            jobs_list[i].pid = i;
+            jobs_list[i].pid = pid;
             jobs_list[i].startTime = time(nullptr);
             jobs_list[i].isStopped = isStopped;
             num_entries++;
@@ -341,7 +370,7 @@ static void printIdErrorMessage(int jobId, string commandType) {
     perror(message.c_str());
 }
 
-JobsList::JobEntry *JobsList::getJobById(int jobId, string commandType) {
+JobsList::JobEntry *JobsList::getJobById(int jobId) {
     if (jobId < 1 || num_entries == 0) {
         return nullptr;
     }
@@ -407,6 +436,18 @@ JobsList::JobEntry *JobsList::getLastStoppedJob(int *jobId) {
     return nullptr;
 }
 
+void JobsList::killAllJobs() {
+    for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
+        if (jobs_list[i].jobId != 0){
+            cout << jobs_list[i].pid << ": "
+            << jobs_list[i].command->getCommandLine();
+            if (kill(jobs_list[i].pid, SIGKILL) < 1){
+                perror("smash error: kill failed");
+            }
+        }
+    }
+}
+
 JobsCommand::JobsCommand(const char *cmd_line, JobsList *jobs):
         BuiltInCommand(cmd_line) {
     jl = jobs;
@@ -444,14 +485,14 @@ void KillCommand::execute() {
         }
 
     }
-    int jobId = atoi(args[2]);
+    int jobId = stoi(args[2]);
     if (jobId < 1 || jobId > 100 ||
             stoi(str_sig_num) < 0 || stoi(str_sig_num) > 31){
         printIdErrorMessage(jobId, "kill");
         return;
     }
     //getJobById returns null if can't find job id for any reason
-    JobsList::JobEntry* je = jl->getJobById(jobId, "kill");
+    JobsList::JobEntry* je = jl->getJobById(jobId);
     if (je == nullptr){
         printIdErrorMessage(jobId, "kill");
         return;
@@ -464,4 +505,102 @@ void KillCommand::execute() {
         cout << "signal number " << str_sig_num
         << "was sent to pid " << je->pid << endl;
     }
+}
+//===========================Foreground and Background commands Implementation=================================
+
+ForegroundCommand::ForegroundCommand(const char *cmd_line, JobsList *jobs)
+    :BuiltInCommand(cmd_line) {
+    jl = jobs;
+}
+
+//handle both fg and bg but with a bit of difference
+// if numargs != 2 no need to send args_1
+void FGBGAUX(int num_args, JobsList* jl,
+             string cmd_line, string commandType, string args_1 = ""){
+    JobsList::JobEntry* je = nullptr;
+    string message = "smash error: ";
+    string str = ": ";
+    string  empty = " jobs list is empty";
+    string  args = " invalid arguments";
+    message += commandType += str;
+    //bring job with maximal jobID to foreground
+    if (num_args == 1){
+        int  id = 0;
+        if (commandType == "fg"){
+            je = jl->getLastJob(&id);
+        } else if (commandType == "bg"){
+            je = jl->getLastStoppedJob(&id);
+        }
+        if (je == nullptr){
+            perror((message += empty).c_str());
+            return;
+        }
+    } else if (num_args == 2){
+        //bring job with args[1] jobID to foreground
+        je = jl->getJobById(stoi(args_1));
+        if (je == nullptr){
+            printIdErrorMessage(stoi(args_1), commandType);
+            return;
+        }
+    } else{
+        perror((message += args).c_str());
+        return;
+    }
+    //assuming je is found
+    cout << cmd_line << " : " << je->pid;
+    if (kill(je->pid, SIGCONT) < 0){
+        perror("smash error: kill failed");
+        return;
+    }
+    if (commandType == "fg"){
+        jl->removeJobById(je->jobId, "fg");
+        //WUNTRACED in case the process gets stopped
+        if (waitpid(je->pid, NULL, WUNTRACED) < 0){
+            perror("smash error: waitpid failed");
+        }
+    } else if (commandType == "bg"){
+        je->isStopped = false;
+    }
+}
+
+void ForegroundCommand::execute() {
+    if (num_args == 2){
+        FGBGAUX(num_args, jl, cmd_line, "fg", args[1]);
+    } else{
+        FGBGAUX(num_args, jl, cmd_line, "fg");
+    }
+}
+
+BackgroundCommand::BackgroundCommand(const char *cmd_line, JobsList *jobs)
+    :BuiltInCommand(cmd_line){
+    jl = jobs;
+}
+
+void BackgroundCommand::execute() {
+    if (num_args == 2){
+        FGBGAUX(num_args, jl, cmd_line, "bg", args[1]);
+    } else{
+        FGBGAUX(num_args, jl, cmd_line, "bg");
+    }
+}
+
+
+//===========================Quit command Implementation=================================
+
+QuitCommand::QuitCommand(const char *cmd_line, JobsList *jobs):
+    BuiltInCommand(cmd_line) {
+    jl = jobs;
+}
+
+void QuitCommand::execute() {
+    if (num_args > 1){
+        //kill argument may be passed
+        if (strcmp(args[1], "kill") == 0){
+            cout << "smash: sending SIGKILL signal to " << jl->getNumEntries()
+            << " jobs";
+            jl->killAllJobs();
+        }
+    }
+    //if kill was not sent
+    exit(1);
 }

@@ -11,7 +11,7 @@
 #define MAX_COMMANDS (100)
 
 using namespace std;
-
+class JobsList;
 class Command {
 // TODO: Add your data members
 protected:
@@ -38,8 +38,9 @@ class BuiltInCommand : public Command {
 };
 
 class ExternalCommand : public Command {
+    JobsList* jl;
  public:
-  ExternalCommand(const char* cmd_line);
+  ExternalCommand(const char *cmd_line, JobsList *jobs);
   virtual ~ExternalCommand() {}
   void execute() override;
 };
@@ -96,15 +97,6 @@ class ShowPidCommand : public BuiltInCommand {
   void execute() override;
 };
 
-class JobsList;
-
-class QuitCommand : public BuiltInCommand {
-// TODO: Add your data members public:
-  QuitCommand(const char* cmd_line, JobsList* jobs);
-  virtual ~QuitCommand() {}
-  void execute() override;
-};
-
 class JobsList {
     //assuming only 100 jobs, we'll use an array
  public:
@@ -127,11 +119,16 @@ private:
  public:
   JobsList();
   ~JobsList();
-  void addJob(Command* cmd, bool isStopped = false);
+  int getNumEntries(){
+      return num_entries;
+  }
+  void addJob(Command *cmd, int pid, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
-  void removeFinishedJobs();
-  JobEntry *getJobById(int jobId, string commandType);
+
+  //TODO implement
+  void removeFinishedJobs(){}
+  JobEntry *getJobById(int jobId);
   void removeJobById(int jobId, string commandType);
   JobEntry * getLastJob(int* lastJobId);
   JobEntry *getLastStoppedJob(int *jobId);
@@ -139,6 +136,7 @@ private:
     // TODO: Add extra methods or modify exisitng ones as needed
 
 };
+
 class JobsCommand : public BuiltInCommand {
     JobsList* jl;
  public:
@@ -146,7 +144,6 @@ class JobsCommand : public BuiltInCommand {
   ~JobsCommand() {}
   void execute() override;
 };
-
 class KillCommand : public BuiltInCommand {
     JobsList* jl;
  public:
@@ -156,7 +153,9 @@ class KillCommand : public BuiltInCommand {
 };
 
 class ForegroundCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
+
+    // TODO: Add your data members
  public:
   ForegroundCommand(const char* cmd_line, JobsList* jobs);
   virtual ~ForegroundCommand() {}
@@ -164,11 +163,22 @@ class ForegroundCommand : public BuiltInCommand {
 };
 
 class BackgroundCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
+
+    // TODO: Add your data members
  public:
   BackgroundCommand(const char* cmd_line, JobsList* jobs);
   virtual ~BackgroundCommand() {}
   void execute() override;
+};
+
+class QuitCommand : public BuiltInCommand {
+    JobsList* jl;
+    // TODO: Add your data members public:
+public:
+    QuitCommand(const char* cmd_line, JobsList* jobs);
+    virtual ~QuitCommand() {}
+    void execute() override;
 };
 
 class HeadCommand : public BuiltInCommand {
