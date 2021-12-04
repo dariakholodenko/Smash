@@ -3,14 +3,18 @@
 
 #include <vector>
 #include <string.h>
+#include <time.h>
+#include <iostream>
 
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+#define MAX_COMMANDS (100)
 
 using namespace std;
+class JobsList;
+class SmallShell;
 
 class Command {
-// TODO: Add your data members
 protected:
 	const char* cmd_line;
     int num_args = 0;
@@ -19,6 +23,10 @@ protected:
   Command(const char* cmd_line);
   virtual ~Command();
   virtual void execute() = 0;
+
+  const char* getCommandLine(){
+      return cmd_line;
+  }
   //virtual void prepare();
   //virtual void cleanup();
   // TODO: Add your extra methods if needed
@@ -31,8 +39,10 @@ class BuiltInCommand : public Command {
 };
 
 class ExternalCommand : public Command {
+	SmallShell* shell;
+    JobsList* jl;
  public:
-  ExternalCommand(const char* cmd_line);
+  ExternalCommand(const char *cmd_line, SmallShell* shell, JobsList *jobs);
   virtual ~ExternalCommand() {}
   void execute() override;
 };
@@ -54,9 +64,6 @@ class RedirectionCommand : public Command {
   //void prepare() override;
   //void cleanup() override;
 };
-
-
-class SmallShell;
 
 class ChangePromptCommand : public BuiltInCommand {
     SmallShell* shell;
@@ -89,47 +96,56 @@ class ShowPidCommand : public BuiltInCommand {
   void execute() override;
 };
 
-class JobsList;
-
-class QuitCommand : public BuiltInCommand {
-// TODO: Add your data members public:
-  QuitCommand(const char* cmd_line, JobsList* jobs);
-  virtual ~QuitCommand() {}
-  void execute() override;
-};
-
 class JobsList {
+    //assuming only 100 jobs, we'll use an array
  public:
   class JobEntry {
-   // TODO: Add your data members
+  public:
+      JobEntry() = default;
+      ~JobEntry() = default;
+      int jobId;
+      Command* command;
+      int pid;
+      time_t  startTime;
+      bool isStopped;
+      friend ostream & operator << (ostream &out, const JobEntry&je);
   };
- // TODO: Add your data members
+
+private:
+    //if job id is 0 => no running job at [i] location
+    JobEntry jobs_list[MAX_COMMANDS +1];
+    int num_entries;
  public:
   JobsList();
   ~JobsList();
-  void addJob(Command* cmd, bool isStopped = false);
+  int getNumEntries(){
+      return num_entries;
+  }
+  int addJob(Command *cmd, int pid, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
-  void removeFinishedJobs();
-  JobEntry * getJobById(int jobId);
-  void removeJobById(int jobId);
+
+  //TODO implement
+  void removeFinishedJobs(){}
+  JobEntry *getJobById(int jobId);
+  void removeJobById(int jobId, string commandType);
   JobEntry * getLastJob(int* lastJobId);
   JobEntry *getLastStoppedJob(int *jobId);
-  // TODO: Add extra methods or modify exisitng ones as needed
+  //int getLastJobPid();
+
+    // TODO: Add extra methods or modify exisitng ones as needed
+
 };
+
 class JobsCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
  public:
   JobsCommand(const char* cmd_line, JobsList* jobs);
-  virtual ~JobsCommand() {}
+  ~JobsCommand() {}
   void execute() override;
 };
-
-
-
-
 class KillCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
  public:
   KillCommand(const char* cmd_line, JobsList* jobs);
   virtual ~KillCommand() {}
@@ -137,7 +153,9 @@ class KillCommand : public BuiltInCommand {
 };
 
 class ForegroundCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
+
+    // TODO: Add your data members
  public:
   ForegroundCommand(const char* cmd_line, JobsList* jobs);
   virtual ~ForegroundCommand() {}
@@ -145,11 +163,22 @@ class ForegroundCommand : public BuiltInCommand {
 };
 
 class BackgroundCommand : public BuiltInCommand {
- // TODO: Add your data members
+    JobsList* jl;
+
+    // TODO: Add your data members
  public:
   BackgroundCommand(const char* cmd_line, JobsList* jobs);
   virtual ~BackgroundCommand() {}
   void execute() override;
+};
+
+class QuitCommand : public BuiltInCommand {
+    JobsList* jl;
+    // TODO: Add your data members public:
+public:
+    QuitCommand(const char* cmd_line, JobsList* jobs);
+    virtual ~QuitCommand() {}
+    void execute() override;
 };
 
 class HeadCommand : public BuiltInCommand {
@@ -160,8 +189,11 @@ class HeadCommand : public BuiltInCommand {
 };
 
 class SmallShell {
+
  private:
-  // TODO: Add your data members
+  Command* current_fg_cmd;
+  int current_fg_cmd_pid;
+  JobsList* jobsList;
   string prompt;
   string lastPwd;
   SmallShell();
@@ -177,11 +209,14 @@ class SmallShell {
   }
   ~SmallShell();
   void executeCommand(const char* cmd_line);
-  // TODO: add extra methods as needed
   string getPrompt();
   void setNewPrompt(string new_prompt);
   string getLastPwd();
   void setLastPwd(string new_last_pwd);
+  //int getLastJobPid();
+  void setCurrentFGCmd(Command* cmd, int pid);
+  int getCurrentFGCmdPid();
+  void addStoppedJob();
 
 };
 
