@@ -101,7 +101,7 @@ class JobsList {
       JobEntry() = default;
       ~JobEntry() = default;
       int jobId;
-      const char* cmd_line;
+      string cmd_line;
       int pid;
       time_t  startTime;
       bool isStopped;

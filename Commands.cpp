@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <time.h>
+#include <errno.h>
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
@@ -200,9 +201,7 @@ ExternalCommand::ExternalCommand(const char *cmd_line,
 }
 												
 void ExternalCommand::execute() {
-	//TODO external cmd_line works in the foreground, need to
-    //TODO implement background work, all of which are added
-    //TODO to jobs list using addJob(this,pid,isstopped = false)
+
 	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
 	strcpy(arg, cmd_line);
 	
@@ -218,11 +217,11 @@ void ExternalCommand::execute() {
         if (cpid < 0){
             perror("smash error: getpid failed");
         }
-        
+
 		setpgrp();
 		execvp("/bin/bash", paramlist);
 		
-		perror("smash error: executioin failed\n");
+		perror("smash error: execution failed\n");
 		if (kill(cpid, SIGKILL) < 0){
             perror("smash error: kill failed");
         }
@@ -231,6 +230,7 @@ void ExternalCommand::execute() {
 		int tempjobId = -1;
 		
 		if(_isBackgroundComamnd(cmd_line)) {
+            //TODO fix: we're adding wrong commands to the job list.
 			tempjobId = jl->addJob(cmd_line, pid, 0);
 			if(tempjobId == -1) perror("smash error: couldn't add a job to list");
 		}
@@ -364,7 +364,7 @@ JobsList::JobsList() {
     //init
     for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
         jobs_list[i].jobId = 0;
-        jobs_list[i].cmd_line = nullptr;
+        jobs_list[i].cmd_line = "";
         jobs_list[i].pid = 0;
         jobs_list[i].startTime = 0;
         jobs_list[i].isStopped = false;
@@ -384,7 +384,6 @@ int JobsList::addJob(const char *cmd, int pid, bool isStopped) {
         if (jobs_list[i].jobId == 0){
             jobs_list[i].jobId = i;
             jobs_list[i].cmd_line = cmd;
-            //TODO get pid of added job this is wrong.
             jobs_list[i].pid = pid;
             jobs_list[i].startTime = time(nullptr);
             jobs_list[i].isStopped = isStopped;
@@ -422,7 +421,7 @@ void JobsList::removeJobById(int jobId, string commandType) {
     } else{
         //Reset
         jobs_list[jobId].jobId = 0;
-        jobs_list[jobId].cmd_line = nullptr;
+        jobs_list[jobId].cmd_line = "";
         jobs_list[jobId].pid = 0;
         jobs_list[jobId].startTime = 0;
         jobs_list[jobId].isStopped = false;
@@ -492,10 +491,22 @@ void JobsList::killAllJobs() {
 }
 
 void JobsList::removeFinishedJobs() {
+//    int wstatus;
     for (int i = 0; i <  MAX_COMMANDS + 1 ; ++i) {
         if (jobs_list[i].jobId != 0){
             //test signal to see pid is still running in background
-            if (kill(jobs_list[i].pid, 0) < 0){
+//            int wpid = waitpid(jobs_list[i].pid, &wstatus , WNOHANG | WEXITED);
+//            if (wpid == 0 || wpid == -1) continue;
+//            if (WIFEXITED(wstatus)){
+//                removeJobById(i,"");
+//            }
+//            if (waitpid(jobs_list[i].jobId, nullptr, WNOHANG) < 0){
+//                perror("smash error: waitpid failed");
+//                return;
+//            }
+            int status = kill(jobs_list[i].pid, 0);
+
+            if (status == -1 && errno == ESRCH){
                 //this means pid is no longer running
                 removeJobById(i,"");
             }
@@ -650,7 +661,7 @@ QuitCommand::QuitCommand(const char *cmd_line, JobsList *jobs):
 }
 
 void QuitCommand::execute() {
-    jl->removeFinishedJobs();
+//    jl->removeFinishedJobs();
     if (num_args > 1){
         //kill argument may be passed
         if (strcmp(args[1], "kill") == 0){
