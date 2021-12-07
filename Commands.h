@@ -38,7 +38,7 @@ class BuiltInCommand : public Command {
   virtual ~BuiltInCommand() {}
 };
 
-class ExternalCommand : public Command {
+class ExternalCommand : public Command { //Red
 	SmallShell* shell;
     JobsList* jl;
  public:
@@ -56,9 +56,11 @@ class PipeCommand : public Command {
 };
 
 class RedirectionCommand : public Command {
- // TODO: Add your data members
+ private: 
+	bool isAppend;
+	char path[COMMAND_ARGS_MAX_LENGTH];
  public:
-  explicit RedirectionCommand(const char* cmd_line);
+  explicit RedirectionCommand(const char* cmd_line, bool isAppend);
   virtual ~RedirectionCommand() {}
   void execute() override;
   //void prepare() override;
@@ -82,14 +84,14 @@ public:
     void execute() override;
 };
 
-class GetCurrDirCommand : public BuiltInCommand {
+class GetCurrDirCommand : public BuiltInCommand { //Red
  public:
   GetCurrDirCommand(const char* cmd_line);
   virtual ~GetCurrDirCommand() {}
   void execute() override;
 };
 
-class ShowPidCommand : public BuiltInCommand {
+class ShowPidCommand : public BuiltInCommand { //Red
  public:
   ShowPidCommand(const char* cmd_line);
   virtual ~ShowPidCommand() {}
@@ -124,9 +126,10 @@ private:
   int addJob(Command *cmd, int pid, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
+  void removeFinishedJobs();
 
   //TODO implement
-  void removeFinishedJobs(){}
+  //void removeFinishedJobs(){}
   JobEntry *getJobById(int jobId);
   void removeJobById(int jobId, string commandType);
   JobEntry * getLastJob(int* lastJobId);
@@ -137,7 +140,7 @@ private:
 
 };
 
-class JobsCommand : public BuiltInCommand {
+class JobsCommand : public BuiltInCommand { //Red
     JobsList* jl;
  public:
   JobsCommand(const char* cmd_line, JobsList* jobs);
