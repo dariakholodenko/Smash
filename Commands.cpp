@@ -2,6 +2,7 @@
 #include <string.h>
 #include <iostream>
 #include <vector>
+#include <set>
 #include <time.h>
 #include <errno.h>
 #include <sstream>
@@ -11,6 +12,8 @@
 #include "Commands.h"
 
 using namespace std;
+set<string> built_in_commands {"chprompt", "showpid", "pwd" ,"cd", "jobs",
+                                  "kill", "fg", "bg", "quit"};
 
 const std::string WHITESPACE = " \n\r\t\f\v";
 const size_t MAX_COMMAND_LENGTH = 255;
@@ -102,14 +105,16 @@ BuiltInCommand::BuiltInCommand(const char* cmd_line)
 }
 
 ShowPidCommand::ShowPidCommand(const char* cmd_line) 
-										: BuiltInCommand(cmd_line) {} 
+										: BuiltInCommand(cmd_line) {}
 
 void ShowPidCommand::execute() {
+    SmallShell& shell = SmallShell::getInstance();
+    std::cout<< "smash pid is "<< shell.getPid() << std::endl;
     int pid = getpid();
     if (pid < 0){
         perror("smash error: getpid failed");
     } else{
-        std::cout<< "smash pid is "<< getpid() << std::endl;
+
 	}
 }
 
@@ -202,9 +207,7 @@ ExternalCommand::ExternalCommand(const char *cmd_line,
 }
 												
 void ExternalCommand::execute() {
-	//TODO external command works in the foreground, need to
-    //TODO implement background work, all of which are added
-    //TODO to jobs list using addJob(this,pid,isstopped = false)
+
 	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
 	strcpy(arg, cmd_line);
 	bool isBG = _isBackgroundComamnd(cmd_line);
@@ -220,6 +223,9 @@ void ExternalCommand::execute() {
 	}
 	
 	if(pid == 0) {
+        if (setpgrp() == -1){
+            perror("smash error: setpgrp failed");
+        }
         int cpid = getpid();
         if (cpid < 0){
             perror("smash error: getpid failed");
@@ -430,6 +436,7 @@ void JobsList::removeFinishedJobs() {
             if (wpid == 0) continue;
             if ((wpid == jobs_list[i].pid && WIFEXITED(wstatus))
             || (wpid == -1 && errno == ESRCH)){
+                perror("smash error: waitpid failed");
                 removeJobById(i,"");
             }
 //            if (waitpid(jobs_list[i].jobId, nullptr, WNOHANG) < 0){
@@ -620,40 +627,178 @@ RedirectionCommand::RedirectionCommand(const char* cmd_line
 
 void RedirectionCommand::execute() {
 	int file;
-	
+
 	if(isAppend == true) {
 		file = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
 	}
 	else {
 		file = open(path, O_WRONLY | O_CREAT , 0666);
 	}
-	
+
 	if(file == -1) {
 		perror("smash: open failed");
 	}
-	
+
 	int fd = dup2(STDOUT_FILENO, file);
-	
+
 	if(fd == -1) {
 		perror("smash: dup2 failed");
 	}
-	
+
 	//inner command execution - Under constraction
-	
+
 	if(close(file) == -1) {
 		perror("smash: close failed");
 	}
-	
+
 	if(close(fd) == -1) {
 		perror("smash: close failed");
 	}
 }
+
+//======================PipeCommand Implementation===============
+
+PipeCommand::PipeCommand(const char *cmd_line, SmallShell* shell,
+                         bool isError, int pos) :
+    Command(cmd_line) , isError(isError) {
+    cur_shell = shell;
+    string s = cmd_line;
+    cmd_1 = s.substr(0, pos);
+    cmd_2 = s.substr(pos+1,string::npos);
+}
+
+void PipeCommand::execute() {
+
+    cmd_1 = _trim(string(cmd_1));
+    cmd_2 = _trim(string(cmd_2));
+    Command* cmd1 = nullptr;
+    Command* cmd2 = nullptr;
+    string firstWordCmd1 = cmd_1.substr(0, cmd_1.find_first_of(" \n"));
+    string firstWordCmd2 = cmd_2.substr(0, cmd_2.find_first_of(" \n"));
+    if (built_in_commands.find(firstWordCmd1) != built_in_commands.end()){
+        cmd1 = cur_shell->CreateCommand(cmd_1.c_str());
+    }
+    if (built_in_commands.find(firstWordCmd2) != built_in_commands.end()){
+        cmd2 = cur_shell->CreateCommand(cmd_2.c_str());
+    }
+
+    int fd[2];
+    if (pipe(fd) < 0){
+        perror("smash error: pipe failed");
+        return;
+    }
+    int child_1 = fork();
+    if (child_1 < 0){
+        perror("smash error: fork failed");
+        return;
+    }
+    if (child_1 == 0) {
+        if(setpgrp() == -1){
+            perror("smash error: setpgrp failed");
+            return;
+        }
+        // first child
+        if (dup2(fd[1],1) < 0){
+            perror("smash error: dup2 failed");
+            return;
+        }
+        if (close(fd[0]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        if (close(fd[1]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        //cmd 1 is not built in
+        if(cmd1 == nullptr) {
+            char* const paramlist_1[] = {"bash", "-c",
+                                         (char* const)cmd_1.c_str(), NULL};
+            if (execv("/bin/bash", paramlist_1) == -1){
+                perror("smash error: execv failed");
+            }
+
+        }else{
+            //cmd 1 is built in
+            cmd1->execute();
+            exit(0);
+        }
+    }
+    int child_2 = fork();
+    if (child_2 < 0){
+        perror("smash error: fork failed");
+        return;
+    }
+    if (child_2 == 0) {
+        if(setpgrp() == -1){
+            perror("smash error: setpgrp failed");
+            return;
+        }
+        // second child
+        if (dup2(fd[0],0) < 0){
+            perror("smash error: dup2 failed");
+            return;
+        }
+        if (close(fd[0]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+
+        if (close(fd[1]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        //cmd 2 is not built in
+        if(cmd2 == nullptr) {
+            char* const paramlist_2[] = {"bash", "-c",
+                                         (char* const)cmd_2.c_str(), NULL};
+            if (execv("/bin/bash", paramlist_2) == -1){
+                perror("smash error: execv failed");
+            }
+
+        }else{
+            //cmd 2 is built in
+            cmd2->execute();
+            exit(0);
+        }
+    }
+    else{
+        if (close(fd[0]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        if (close(fd[1]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        if (waitpid(child_1, nullptr,0) == -1){
+            perror("smash error: waitpid failed");
+        }
+        if (waitpid(child_2, nullptr,0) == -1){
+            perror("smash error: waitpid failed");
+        }
+        if (cmd1 != nullptr){
+            delete cmd1;
+            cmd1 = nullptr;
+        }
+        if (cmd2 != nullptr){
+            delete cmd2;
+            cmd2 = nullptr;
+        }
+    }
+
+}
+
 //===========================SmallShell=================================
 
-SmallShell::SmallShell() 
-		: current_fg_cmd(nullptr), current_fg_cmd_pid(-1), 
+SmallShell::SmallShell()
+		: current_fg_cmd(nullptr), current_fg_cmd_pid(-1),
 										prompt("smash"), lastPwd("") {
     jobsList = new JobsList();
+    pid = getpid();
+    if (pid < 0){
+        perror("smash error: getpid() failed");
+    }
 }
 
 SmallShell::~SmallShell() {
@@ -666,13 +811,13 @@ SmallShell::~SmallShell() {
 */
 
 Command * SmallShell::CreateCommand(const char* cmd_line) {
-	
+
 	string cmd_s = _trim(string(cmd_line));
 	string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-	
+
 	size_t idx = ((string)cmd_line).find_first_of('>');
-	
-	
+    size_t idy = cmd_s.find_first_of('|');
+
 	if(idx != std::string::npos) {
 		bool isAppend = false;
 		if(cmd_line[idx+1] == '>') {
@@ -680,6 +825,13 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
 		}
 		return new RedirectionCommand(cmd_line, isAppend);
 	}
+    if(idy != std::string::npos) {
+        bool isError = false;
+        if(cmd_line[idy+1] == '&') {
+            isError = true;
+        }
+        return new PipeCommand(cmd_line, this, isError, idy);
+    }
 	else if (firstWord.compare("chprompt") == 0) {
         return new ChangePromptCommand(cmd_line, this);
 	}
@@ -707,27 +859,27 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     else if (firstWord.compare("quit") == 0) {
         return new QuitCommand(cmd_line, jobsList);
     }
-
         //else if ...
   //.....
   else {
     return new ExternalCommand(cmd_line, this, jobsList);
   }
-  
+
   return nullptr;
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
-	
-	Command* cmd = CreateCommand(cmd_line);
-	
-	if(cmd != nullptr) {
+
+    Command* cmd = CreateCommand(cmd_line);
+
+
+    if(cmd != nullptr) {
         cmd->execute();
-	}
-	
+    }
+
     delete cmd;
     cmd = nullptr;
-	//Please note that you must fork smash process for some commands (e.g., external commands....)
+    //Please note that you must fork smash process for some commands (e.g., external commands....)
 }
 
 /*int SmallShell::getLastJobPid() {
@@ -735,14 +887,14 @@ void SmallShell::executeCommand(const char *cmd_line) {
 }*/
 
 void SmallShell::setCurrentFGCmd(const char * cmd, int pid) {
-	current_fg_cmd = cmd;
-	current_fg_cmd_pid = pid;
+    current_fg_cmd = cmd;
+    current_fg_cmd_pid = pid;
 }
 
 int SmallShell::getCurrentFGCmdPid() {
-	return current_fg_cmd_pid;
+    return current_fg_cmd_pid;
 }
 
 void SmallShell::addStoppedJob() {
-	jobsList->addJob(current_fg_cmd, current_fg_cmd_pid, 1);
+    jobsList->addJob(current_fg_cmd, current_fg_cmd_pid, 1);
 }

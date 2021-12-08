@@ -45,9 +45,13 @@ class ExternalCommand : public Command {
 };
 
 class PipeCommand : public Command {
-  // TODO: Add your data members
+    SmallShell* cur_shell;
+    bool isError;
+    int pos;
+    string cmd_1;
+    string cmd_2;
  public:
-  PipeCommand(const char* cmd_line);
+  PipeCommand(const char* cmd_line, SmallShell* shell, bool isError, int pos);
   virtual ~PipeCommand() {}
   void execute() override;
 };
@@ -140,6 +144,7 @@ class JobsCommand : public BuiltInCommand {
   ~JobsCommand() {}
   void execute() override;
 };
+
 class KillCommand : public BuiltInCommand {
     JobsList* jl;
  public:
@@ -192,6 +197,7 @@ class SmallShell {
   JobsList* jobsList;
   string prompt;
   string lastPwd;
+  int pid;
   SmallShell();
  public:
   Command *CreateCommand(const char* cmd_line);
@@ -208,6 +214,9 @@ class SmallShell {
   string getPrompt();
   void setNewPrompt(string new_prompt);
   string getLastPwd();
+  int getPid(){
+      return pid;
+  }
   void setLastPwd(string new_last_pwd);
   //int getLastJobPid();
   void setCurrentFGCmd(const char* cmd, int pid);
