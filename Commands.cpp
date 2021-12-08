@@ -2,7 +2,9 @@
 #include <string.h>
 #include <iostream>
 #include <vector>
+#include <set>
 #include <time.h>
+#include <errno.h>
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
@@ -10,6 +12,8 @@
 #include "Commands.h"
 
 using namespace std;
+set<string> built_in_commands {"chprompt", "showpid", "pwd" ,"cd", "jobs",
+                                  "kill", "fg", "bg", "quit"};
 
 const std::string WHITESPACE = " \n\r\t\f\v";
 const size_t MAX_COMMAND_LENGTH = 255;
@@ -70,13 +74,13 @@ void _removeBackgroundSign(char* cmd_line) {
   if (idx == string::npos) {
     return;
   }
-  // if the command line does not end with & then return
+  // if the cmd_line line does not end with & then return
   if (cmd_line[idx] != '&') {
     return;
   }
   // replace the & (background sign) with space and then remove all tailing spaces.
   cmd_line[idx] = ' ';
-  // truncate the command line string up to the last non-space character
+  // truncate the cmd_line line string up to the last non-space character
   cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
@@ -84,6 +88,7 @@ void _removeBackgroundSign(char* cmd_line) {
 Command::Command(const char* cmd_line) : cmd_line(cmd_line) {
     num_args = _parseCommandLine(cmd_line, args);
 }
+
 
 Command::~Command() {
     for (int i = 0; i < num_args; ++i) {
@@ -94,7 +99,6 @@ Command::~Command() {
 //====================BuiltIn Commands Implementation===================
 BuiltInCommand::BuiltInCommand(const char* cmd_line) 
 	: Command(cmd_line) {
-    //see piazza @49_
     for (int i = 0; i < num_args; ++i) {
         _removeBackgroundSign(args[i]);
     }
@@ -104,11 +108,13 @@ ShowPidCommand::ShowPidCommand(const char* cmd_line)
 										: BuiltInCommand(cmd_line) {} 
 
 void ShowPidCommand::execute() {
+    SmallShell& shell = SmallShell::getInstance();
+    std::cout<< "smash pid is "<< shell.getPid() << std::endl;
     int pid = getpid();
     if (pid < 0){
         perror("smash error: getpid failed");
     } else{
-        std::cout<< "smash pid is "<< getpid() << std::endl;
+        //std::cout<< "smash pid is "<< getpid() << std::endl;
 	}
 }
 
@@ -201,24 +207,29 @@ ExternalCommand::ExternalCommand(const char *cmd_line,
 }
 												
 void ExternalCommand::execute() {
-	
+  
 	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
 	strcpy(arg, cmd_line);
 	bool isBG = _isBackgroundComamnd(cmd_line);
 	 _removeBackgroundSign(arg);
-	 
-	char* const bash = strdup("bash");
+  
+  //this way we don't get warnings about convertion
+  char* const bash = strdup("bash");
 	char* const flag = strdup("-c");
 	char* const paramlist[] = {bash, flag, arg, NULL};
+
 	int pid = fork();
 	
 	int tempjobId = -1;
 	
 	if(pid == -1) {
-		perror("smash error: Failed forking a child command\n");
+      perror("smash error: Failed forking a child cmd_line\n");
 	}
 	
 	if(pid == 0) {
+        if (setpgrp() == -1){
+            perror("smash error: setpgrp failed");
+        }
         int cpid = getpid();
         if (cpid < 0){
             perror("smash error: getpid failed");
@@ -228,30 +239,28 @@ void ExternalCommand::execute() {
 		execvp("/bin/bash", paramlist);
 		
 		perror("smash error: executioin failed\n");
+
 		if (kill(cpid, SIGKILL) < 0){
             perror("smash error: kill failed");
         }
 	}
 	else {
-		if(isBG == true) {
-			tempjobId = jl->addJob(this, pid, 0);
+
+		if(isBG) {
+			tempjobId = jl->addJob(cmd_line, pid, 0);
 			
 			if(tempjobId == -1) {
 				perror("smash error: coudn't add a job to list");
 			}
 		
+
 			if(waitpid(pid, NULL, WNOHANG) < 0) {
 				perror("smash error: waitpid failed");
-			}
-			//else {
-			//	if(tempjobId != -1) {
-			//	//	jl->removeJobById(tempjobId, cmd_line);
-			//	}
-			//}			
+			}		
 			
 		}
 		else {
-			shell->setCurrentFGCmd(this, pid);
+			shell->setCurrentFGCmd(arg, pid);
 			
 			//WUNTRACED in case the child gets stopped.
 			if(waitpid(pid, NULL, WUNTRACED) < 0){
@@ -279,6 +288,7 @@ void SmallShell::setNewPrompt(string new_prompt) {
 
 string SmallShell::getLastPwd() {
     return lastPwd;
+
 }
 
 void SmallShell::setLastPwd(string new_last_pwd) {
@@ -290,7 +300,7 @@ JobsList::JobsList() {
     //init
     for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
         jobs_list[i].jobId = 0;
-        jobs_list[i].command = nullptr;
+        jobs_list[i].cmd_line = "";
         jobs_list[i].pid = 0;
         jobs_list[i].startTime = 0;
         jobs_list[i].isStopped = false;
@@ -302,15 +312,14 @@ JobsList::~JobsList() {
 
 }
 
-int JobsList::addJob(Command *cmd, int pid, bool isStopped) {
+int JobsList::addJob(const char *cmd, int pid, bool isStopped) {
     if (num_entries == MAX_COMMANDS) perror("smash error: job list is full");
 
     for (int i = 1; i < MAX_COMMANDS + 1; ++i) {
         //find first empty space
         if (jobs_list[i].jobId == 0){
             jobs_list[i].jobId = i;
-            jobs_list[i].command = cmd;
-            //TODO get pid of added job this is wrong.
+            jobs_list[i].cmd_line = cmd;
             jobs_list[i].pid = pid;
             jobs_list[i].startTime = time(nullptr);
             jobs_list[i].isStopped = isStopped;
@@ -348,7 +357,7 @@ void JobsList::removeJobById(int jobId, string commandType) {
     } else{
         //Reset
         jobs_list[jobId].jobId = 0;
-        jobs_list[jobId].command = nullptr;
+        jobs_list[jobId].cmd_line = "";
         jobs_list[jobId].pid = 0;
         jobs_list[jobId].startTime = 0;
         jobs_list[jobId].isStopped = false;
@@ -359,33 +368,17 @@ void JobsList::removeJobById(int jobId, string commandType) {
 void JobsList::printJobsList() {
     //empty
     if (num_entries == 0) return;
-   
     for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
-        if ((jobs_list[i].jobId != 0)){
-				cout << jobs_list[i];
-		}
-    }
-}
-
-void JobsList::removeFinishedJobs() {
-    //empty
-    if (num_entries == 0) return;
-    
-    for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
-        if ((jobs_list[i].jobId != 0)){
-			int skill = kill(jobs_list[i].pid, 0);
-			cout << "jobId: " << jobs_list[i].jobId <<" kill value: " << skill << endl;
-			if( skill == -1 && errno == ESRCH) {
-				removeJobById(i, "");
-			}
+        if (jobs_list[i].jobId != 0){
+            cout << &jobs_list[i];
         }
     }
 }
 
-ostream &operator<<(ostream &out, const JobsList::JobEntry &je) {
-    out << je.jobId << " " << je.command->getCommandLine() <<": "
-        << je.pid << " " << difftime(je.startTime,time(nullptr));
-    if (je.isStopped){
+ostream &operator<<(ostream &out, const JobsList::JobEntry *je) {
+    out << "[" << je->jobId << "]" << " " << je->cmd_line << ": "
+        << je->pid << " " << difftime(time(nullptr), je->startTime);
+    if (je->isStopped){
         out << " (stopped)";
     }
     out << endl;
@@ -402,6 +395,15 @@ JobsList::JobEntry *JobsList::getLastJob(int *lastJobId) {
     return nullptr;
 }
 
+/*int JobsList::getLastJobPid() {
+    for (int i = MAX_COMMANDS; i > 0 ; --i) {
+        if (jobs_list[i].jobId != 0){
+            return jobs_list[i].pid;
+        }
+    }
+    return -1;
+}*/
+
 JobsList::JobEntry *JobsList::getLastStoppedJob(int *jobId) {
     for (int i = MAX_COMMANDS; i > 0 ; --i) {
         if (jobs_list[i].jobId != 0 && jobs_list->isStopped){
@@ -416,12 +418,39 @@ void JobsList::killAllJobs() {
     for (int i = 0; i < MAX_COMMANDS + 1; ++i) {
         if (jobs_list[i].jobId != 0){
             cout << jobs_list[i].pid << ": "
-            << jobs_list[i].command->getCommandLine();
+            << jobs_list[i].cmd_line;
             if (kill(jobs_list[i].pid, SIGKILL) < 1){
                 perror("smash error: kill failed");
             }
         }
     }
+}
+
+void JobsList::removeFinishedJobs() {
+    int wstatus;
+    for (int i = 0; i <  MAX_COMMANDS + 1 ; ++i) {
+        if (jobs_list[i].jobId != 0){
+            //test signal to see pid is still running in background
+            int wpid = waitpid(jobs_list[i].pid, &wstatus , WNOHANG);
+//            cout <<"pid: " << wpid << " status: " << WIFEXITED(wstatus) << endl ;
+            if (wpid == 0) continue;
+            if ((wpid == jobs_list[i].pid && WIFEXITED(wstatus))
+            || (wpid == -1 && errno == ESRCH)){
+                perror("smash error: waitpid failed");
+                removeJobById(i,"");
+            }
+//            if (waitpid(jobs_list[i].jobId, nullptr, WNOHANG) < 0){
+//                perror("smash error: waitpid failed");
+//                return;
+//            }
+//            int status = kill(jobs_list[i].pid, 0);
+//            if (status == -1 && errno == ESRCH){
+//                //this means pid is no longer running
+//                removeJobById(i,"");
+//            }
+        }
+    }
+
 }
 
 JobsCommand::JobsCommand(const char *cmd_line, JobsList *jobs):
@@ -430,11 +459,11 @@ JobsCommand::JobsCommand(const char *cmd_line, JobsList *jobs):
 }
 
 void JobsCommand::execute() {
-	jl->removeFinishedJobs();
+    jl->removeFinishedJobs();
     jl->printJobsList();
 }
 
-//===========================Kill command Implementation=================================
+//===========================Kill cmd_line Implementation=================================
 
 KillCommand::KillCommand(const char *cmd_line, JobsList *jobs):
         BuiltInCommand(cmd_line){
@@ -562,6 +591,7 @@ void BackgroundCommand::execute() {
 }
 
 
+
 //===========================Quit command Implementation=================================
 
 QuitCommand::QuitCommand(const char *cmd_line, JobsList *jobs):
@@ -570,6 +600,8 @@ QuitCommand::QuitCommand(const char *cmd_line, JobsList *jobs):
 }
 
 void QuitCommand::execute() {
+
+    jl->removeFinishedJobs();
     if (num_args > 1){
         //kill argument may be passed
         if (strcmp(args[1], "kill") == 0){
@@ -581,6 +613,7 @@ void QuitCommand::execute() {
     //if kill was not sent
     exit(1);
 }
+
 
 //======================Head Implementation===============
 
@@ -782,12 +815,151 @@ void RedirectionCommand::execute() {
 	
 	close(save_out);
 }
+
+//======================PipeCommand Implementation===============
+
+PipeCommand::PipeCommand(const char *cmd_line, SmallShell* shell,
+                         bool isError, int pos) :
+    Command(cmd_line) , isError(isError) {
+    cur_shell = shell;
+    string s = cmd_line;
+    cmd_1 = s.substr(0, pos);
+    cmd_2 = s.substr(pos+1,string::npos);
+}
+
+void PipeCommand::execute() {
+
+    cmd_1 = _trim(string(cmd_1));
+    cmd_2 = _trim(string(cmd_2));
+    Command* cmd1 = nullptr;
+    Command* cmd2 = nullptr;
+    string firstWordCmd1 = cmd_1.substr(0, cmd_1.find_first_of(" \n"));
+    string firstWordCmd2 = cmd_2.substr(0, cmd_2.find_first_of(" \n"));
+    if (built_in_commands.find(firstWordCmd1) != built_in_commands.end()){
+        cmd1 = cur_shell->CreateCommand(cmd_1.c_str());
+    }
+    if (built_in_commands.find(firstWordCmd2) != built_in_commands.end()){
+        cmd2 = cur_shell->CreateCommand(cmd_2.c_str());
+    }
+
+    int fd[2];
+    if (pipe(fd) < 0){
+        perror("smash error: pipe failed");
+        return;
+    }
+    int child_1 = fork();
+    if (child_1 < 0){
+        perror("smash error: fork failed");
+        return;
+    }
+    if (child_1 == 0) {
+        if(setpgrp() == -1){
+            perror("smash error: setpgrp failed");
+            return;
+        }
+        // first child
+        if (dup2(fd[1],1) < 0){
+            perror("smash error: dup2 failed");
+            return;
+        }
+        if (close(fd[0]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        if (close(fd[1]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        //cmd 1 is not built in
+        if(cmd1 == nullptr) {
+            char* const paramlist_1[] = {"bash", "-c",
+                                         (char* const)cmd_1.c_str(), NULL};
+            if (execv("/bin/bash", paramlist_1) == -1){
+                perror("smash error: execv failed");
+            }
+
+        }else{
+            //cmd 1 is built in
+            cmd1->execute();
+            exit(0);
+        }
+    }
+    int child_2 = fork();
+    if (child_2 < 0){
+        perror("smash error: fork failed");
+        return;
+    }
+    if (child_2 == 0) {
+        if(setpgrp() == -1){
+            perror("smash error: setpgrp failed");
+            return;
+        }
+        // second child
+        if (dup2(fd[0],0) < 0){
+            perror("smash error: dup2 failed");
+            return;
+        }
+        if (close(fd[0]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+
+        if (close(fd[1]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        //cmd 2 is not built in
+        if(cmd2 == nullptr) {
+            char* const paramlist_2[] = {"bash", "-c",
+                                         (char* const)cmd_2.c_str(), NULL};
+            if (execv("/bin/bash", paramlist_2) == -1){
+                perror("smash error: execv failed");
+            }
+
+        }else{
+            //cmd 2 is built in
+            cmd2->execute();
+            exit(0);
+        }
+    }
+    else{
+        if (close(fd[0]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        if (close(fd[1]) < 0){
+            perror("smash error: close failed");
+            return;
+        }
+        if (waitpid(child_1, nullptr,0) == -1){
+            perror("smash error: waitpid failed");
+        }
+        if (waitpid(child_2, nullptr,0) == -1){
+            perror("smash error: waitpid failed");
+        }
+        if (cmd1 != nullptr){
+            delete cmd1;
+            cmd1 = nullptr;
+        }
+        if (cmd2 != nullptr){
+            delete cmd2;
+            cmd2 = nullptr;
+        }
+    }
+
+}
+
 //===========================SmallShell=================================
 
-SmallShell::SmallShell() 
-		: current_fg_cmd(nullptr), current_fg_cmd_pid(-1), 
+SmallShell::SmallShell()
+		: current_fg_cmd(nullptr), current_fg_cmd_pid(-1),
 										prompt("smash"), lastPwd("") {
     jobsList = new JobsList();
+    pid = getpid();
+    if (pid < 0){
+        perror("smash error: getpid() failed");
+    }
+
 }
 
 SmallShell::~SmallShell() {
@@ -800,13 +972,15 @@ SmallShell::~SmallShell() {
 */
 
 Command * SmallShell::CreateCommand(const char* cmd_line) {
-	
+
+
 	string cmd_s = _trim(string(cmd_line));
 	string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-	
+
 	size_t idx = ((string)cmd_line).find_first_of('>');
-	
-	
+   size_t idy = cmd_s.find_first_of('|');
+
+
 	if(idx != std::string::npos) {
 		bool isAppend = false;
 		if(cmd_line[idx+1] == '>') {
@@ -814,6 +988,13 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
 		}
 		return new RedirectionCommand(cmd_line, isAppend, this);
 	}
+  if(idy != std::string::npos) {
+        bool isError = false;
+        if(cmd_line[idy+1] == '&') {
+            isError = true;
+        }
+        return new PipeCommand(cmd_line, this, isError, idy);
+   }
 	else if (firstWord.compare("chprompt") == 0) {
         return new ChangePromptCommand(cmd_line, this);
 	}
@@ -847,11 +1028,12 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
 	else {
 		return new ExternalCommand(cmd_line, this, jobsList);
 	}
-  
+
   return nullptr;
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
+
 	
 	Command* cmd = CreateCommand(cmd_line);
 	

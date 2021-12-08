@@ -27,6 +27,7 @@ protected:
   const char* getCommandLine(){
       return cmd_line;
   }
+
   //virtual void prepare();
   //virtual void cleanup();
   // TODO: Add your extra methods if needed
@@ -37,6 +38,7 @@ class BuiltInCommand : public Command {
   BuiltInCommand(const char* cmd_line);
   virtual ~BuiltInCommand() {}
 };
+
 
 class ExternalCommand : public Command { 
  private:
@@ -49,9 +51,13 @@ class ExternalCommand : public Command {
 };
 
 class PipeCommand : public Command {
-  // TODO: Add your data members
+    SmallShell* cur_shell;
+    bool isError;
+    int pos;
+    string cmd_1;
+    string cmd_2;
  public:
-  PipeCommand(const char* cmd_line);
+  PipeCommand(const char* cmd_line, SmallShell* shell, bool isError, int pos);
   virtual ~PipeCommand() {}
   void execute() override;
 };
@@ -110,11 +116,11 @@ class JobsList {
       JobEntry() = default;
       ~JobEntry() = default;
       int jobId;
-      Command* command;
+      string cmd_line;
       int pid;
       time_t  startTime;
       bool isStopped;
-      friend ostream & operator << (ostream &out, const JobEntry&je);
+      friend ostream & operator << (ostream &out, const JobEntry*je);
   };
 
 private:
@@ -127,18 +133,15 @@ private:
   int getNumEntries(){
       return num_entries;
   }
-  int addJob(Command *cmd, int pid, bool isStopped = false);
+  
+  int addJob(const char *cmd, int pid, bool isStopped = false);
   void printJobsList();
   void killAllJobs();
   void removeFinishedJobs();
-
-  //TODO implement
-  //void removeFinishedJobs(){}
   JobEntry *getJobById(int jobId);
   void removeJobById(int jobId, string commandType);
   JobEntry * getLastJob(int* lastJobId);
   JobEntry *getLastStoppedJob(int *jobId);
-  //int getLastJobPid();
 
     // TODO: Add extra methods or modify exisitng ones as needed
 
@@ -203,11 +206,12 @@ class HeadCommand : public BuiltInCommand {
 class SmallShell {
 
  private:
-  Command* current_fg_cmd;
+  const char * current_fg_cmd;
   int current_fg_cmd_pid;
-  
+  JobsList* jobsList;
   string prompt;
   string lastPwd;
+  int pid;
   SmallShell();
  public:
  JobsList* jobsList;
@@ -225,9 +229,11 @@ class SmallShell {
   string getPrompt();
   void setNewPrompt(string new_prompt);
   string getLastPwd();
+  int getPid(){
+      return pid;
+  }
   void setLastPwd(string new_last_pwd);
-  //int getLastJobPid();
-  void setCurrentFGCmd(Command* cmd, int pid);
+  void setCurrentFGCmd(const char* cmd, int pid);
   int getCurrentFGCmdPid();
   void addStoppedJob();
 
