@@ -57,10 +57,13 @@ class PipeCommand : public Command {
 
 class RedirectionCommand : public Command {
  private: 
+	bool isFailed = false;
 	bool isAppend;
+	SmallShell* shell;
 	char path[COMMAND_ARGS_MAX_LENGTH];
+	vector<string> red_cmd_args;
  public:
-  explicit RedirectionCommand(const char* cmd_line, bool isAppend);
+  explicit RedirectionCommand(const char* cmd_line, bool isAppend, SmallShell* shell);
   virtual ~RedirectionCommand() {}
   void execute() override;
   //void prepare() override;
@@ -84,14 +87,14 @@ public:
     void execute() override;
 };
 
-class GetCurrDirCommand : public BuiltInCommand { //Red
+class GetCurrDirCommand : public BuiltInCommand { 
  public:
   GetCurrDirCommand(const char* cmd_line);
   virtual ~GetCurrDirCommand() {}
   void execute() override;
 };
 
-class ShowPidCommand : public BuiltInCommand { //Red
+class ShowPidCommand : public BuiltInCommand { 
  public:
   ShowPidCommand(const char* cmd_line);
   virtual ~ShowPidCommand() {}
@@ -140,7 +143,7 @@ private:
 
 };
 
-class JobsCommand : public BuiltInCommand { //Red
+class JobsCommand : public BuiltInCommand {
     JobsList* jl;
  public:
   JobsCommand(const char* cmd_line, JobsList* jobs);
@@ -196,11 +199,12 @@ class SmallShell {
  private:
   Command* current_fg_cmd;
   int current_fg_cmd_pid;
-  JobsList* jobsList;
+  
   string prompt;
   string lastPwd;
   SmallShell();
  public:
+ JobsList* jobsList;
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
   void operator=(SmallShell const&)  = delete; // disable = operator

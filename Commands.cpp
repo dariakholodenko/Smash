@@ -596,45 +596,91 @@ void QuitCommand::execute() {
 //======================RedirectionCommand Implementation===============
 
 RedirectionCommand::RedirectionCommand(const char* cmd_line
-			, bool isAppend): Command(cmd_line), isAppend(isAppend) {
+, bool isAppend, SmallShell* shell)
+: Command(cmd_line), isAppend(isAppend), shell(shell) {
 	
-	if(strcmp(args[num_args], "&")) {
-		strcpy(path, args[num_args-1]);
+	bool isBg;
+	string cmd(cmd_line);
+	
+	if(_isBackgroundComamnd(cmd_line) == true) {
+		isBg = true;
+		char* cmd_c = (char*)malloc(cmd.length()+1);
+		strcpy(cmd_c, cmd.c_str());
+		_removeBackgroundSign(cmd_c);
+		cmd = string(cmd_c);
+		
+		free(cmd_c);
+		cmd_c = nullptr;		
+	}
+	
+	size_t l = cmd.find_first_of(">");
+	int offset = 1;
+	
+	if(isAppend == true) {
+		offset = 2;
+	}
+	
+	red_cmd_args.push_back(cmd.substr(0, l));
+	red_cmd_args.push_back(cmd.substr(l+offset, cmd.length()));
+	
+	if(red_cmd_args[0].empty() || red_cmd_args[1].empty()) {
+		isFailed = true;
 	}
 	else {
-		strcpy(path, args[num_args]);
+		for(int i = 0; i < red_cmd_args.size(); i++) {
+			red_cmd_args[i] = _trim(red_cmd_args[i]);
+		}
+		
+		if(isBg == true) {
+			red_cmd_args[0].append("&");
+		}
 	}
+	
 }
 
 void RedirectionCommand::execute() {
-	int file;
+	
+	if(isFailed == true) {
+		cerr << "smash: redirection failed" << endl;
+		return;
+	}
+	
+	int fd;
+	int save_out;
 	
 	if(isAppend == true) {
-		file = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
+		fd = open(red_cmd_args[1].c_str(), O_WRONLY | O_CREAT 
+													| O_APPEND, 0666);
 	}
 	else {
-		file = open(path, O_WRONLY | O_CREAT , 0666);
+		fd = open(red_cmd_args[1].c_str(), O_WRONLY | O_CREAT 
+													| O_TRUNC, 0666);
 	}
 	
-	if(file == -1) {
+	if(fd == -1) {
 		perror("smash: open failed");
 	}
 	
-	int fd = dup2(STDOUT_FILENO, file);
+	save_out = dup(fileno(stdout));
 	
-	if(fd == -1) {
+	if( dup2(fd, fileno(stdout)) == -1) {
+		perror("smash: dup2 failed");
+	}	
+	
+	Command* command = shell->CreateCommand(red_cmd_args[0].c_str());
+	command->execute();
+	
+	delete command;
+	command = nullptr;
+
+	fflush(stdout);
+	close(fd);
+	
+	if(dup2(save_out, fileno(stdout)) == -1) {
 		perror("smash: dup2 failed");
 	}
 	
-	//inner command execution - Under constraction
-	
-	if(close(file) == -1) {
-		perror("smash: close failed");
-	}
-	
-	if(close(fd) == -1) {
-		perror("smash: close failed");
-	}
+	close(save_out);
 }
 //===========================SmallShell=================================
 
@@ -666,7 +712,7 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
 		if(cmd_line[idx+1] == '>') {
 			isAppend = true;
 		}
-		return new RedirectionCommand(cmd_line, isAppend);
+		return new RedirectionCommand(cmd_line, isAppend, this);
 	}
 	else if (firstWord.compare("chprompt") == 0) {
         return new ChangePromptCommand(cmd_line, this);
@@ -695,12 +741,9 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     else if (firstWord.compare("quit") == 0) {
         return new QuitCommand(cmd_line, jobsList);
     }
-
-        //else if ...
-  //.....
-  else {
-    return new ExternalCommand(cmd_line, this, jobsList);
-  }
+	else {
+		return new ExternalCommand(cmd_line, this, jobsList);
+	}
   
   return nullptr;
 }
@@ -715,12 +758,7 @@ void SmallShell::executeCommand(const char *cmd_line) {
 	
     delete cmd;
     cmd = nullptr;
-	//Please note that you must fork smash process for some commands (e.g., external commands....)
 }
-
-/*int SmallShell::getLastJobPid() {
-	return jobsList->getLastJobPid();
-}*/
 
 void SmallShell::setCurrentFGCmd(Command* cmd, int pid) {
 	current_fg_cmd = cmd;
