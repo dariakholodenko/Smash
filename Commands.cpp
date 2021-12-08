@@ -201,15 +201,15 @@ ExternalCommand::ExternalCommand(const char *cmd_line,
 }
 												
 void ExternalCommand::execute() {
-	//TODO external command works in the foreground, need to
-    //TODO implement background work, all of which are added
-    //TODO to jobs list using addJob(this,pid,isstopped = false)
+	
 	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
 	strcpy(arg, cmd_line);
 	bool isBG = _isBackgroundComamnd(cmd_line);
 	 _removeBackgroundSign(arg);
-	
-	char* const paramlist[] = {"bash", "-c", arg, NULL};
+	 
+	char* const bash = strdup("bash");
+	char* const flag = strdup("-c");
+	char* const paramlist[] = {bash, flag, arg, NULL};
 	int pid = fork();
 	
 	int tempjobId = -1;
@@ -235,8 +235,6 @@ void ExternalCommand::execute() {
 	else {
 		if(isBG == true) {
 			tempjobId = jl->addJob(this, pid, 0);
-			//cout << "job id = " << tempjobId << endl;
-			//jl->printJobsList();
 			
 			if(tempjobId == -1) {
 				perror("smash error: coudn't add a job to list");
@@ -602,6 +600,8 @@ HeadCommand::HeadCommand(const char* cmd_line)
 		path = string(args[2]);
 		
 		string temp = string(args[1]);
+		temp = _trim(temp);
+		
 		if(temp.length() >1 && temp.at(0) == '-') {
 			
 			num_lines = temp.at(1) - '0';
@@ -614,6 +614,7 @@ HeadCommand::HeadCommand(const char* cmd_line)
 	}
 	else {
 		path = string(args[1]);
+		path = _trim(path);
 	}
 }
 
@@ -629,7 +630,7 @@ int HeadCommand::readLine(int fd, string* buffer) {
 			return -1;
 		}
 		
-		if(status < sizeof(char)) { //we've reached EOF
+		if((size_t)status < sizeof(char)) { //we've reached EOF
 			break;
 		}
 		
@@ -647,6 +648,7 @@ void HeadCommand::execute() {
 	if(isFailed == true) {
 		return;
 	}
+	
 	
 	int fd = open(path.c_str(), O_RDONLY);
 	
@@ -666,9 +668,9 @@ void HeadCommand::execute() {
 		}
 		
 		cout << buffer;
+		//write(1, buffer.c_str(), buffer.length());
 		
 		if(status == 0) {
-			//cout << "\n";
 			close(fd);
 			return;
 		}
@@ -714,9 +716,8 @@ RedirectionCommand::RedirectionCommand(const char* cmd_line
 		isFailed = true;
 	}
 	else {
-		for(size_t i = 0; i < red_cmd_args.size(); i++) {
-			red_cmd_args[i] = _trim(red_cmd_args[i]);
-		}
+		red_cmd_args[0] = _trim(red_cmd_args[0]);
+		red_cmd_args[1] = _trim(red_cmd_args[1]);
 		
 		if(isBg == true) {
 			red_cmd_args[0].append("&");
@@ -760,7 +761,7 @@ void RedirectionCommand::execute() {
 	if(dup2(fd, fileno(stdout)) == -1) {
 		perror("smash: dup2 failed");
 		close(fd);
-		close(save_out);
+		//close(save_out);
 		return;
 	}	
 	
