@@ -152,7 +152,7 @@ void ChangeDirCommand::execute() {
 
     char buf[COMMAND_ARGS_MAX_LENGTH];
     getcwd(buf,COMMAND_ARGS_MAX_LENGTH);
-    if (!buf) {
+    if (buf == NULL) {
         perror("smash error: getcwd failed");
     }
 
@@ -404,15 +404,6 @@ JobsList::JobEntry *JobsList::getLastJob(int *lastJobId) {
     return nullptr;
 }
 
-/*int JobsList::getLastJobPid() {
-    for (int i = MAX_COMMANDS; i > 0 ; --i) {
-        if (jobs_list[i].jobId != 0){
-            return jobs_list[i].pid;
-        }
-    }
-    return -1;
-}*/
-
 JobsList::JobEntry *JobsList::getLastStoppedJob(int *jobId) {
     for (int i = MAX_COMMANDS; i > 0 ; --i) {
         if (jobs_list[i].jobId != 0 && jobs_list->isStopped){
@@ -593,6 +584,102 @@ void QuitCommand::execute() {
     exit(1);
 }
 
+//======================Head Implementation===============
+
+HeadCommand::HeadCommand(const char* cmd_line) 
+										: BuiltInCommand(cmd_line) {
+	if(num_args == 1) {
+		isFailed = true;
+		cerr << "smash error: head: not enough arguments\n";
+		return;
+	}
+	if(num_args > 3) {
+		isFailed = true;
+		cerr << "smash error: head: too much arguments\n";
+		return;
+	}
+	else if(num_args > 2) {
+		path = string(args[2]);
+		
+		string temp = string(args[1]);
+		if(temp.length() >1 && temp.at(0) == '-') {
+			
+			num_lines = temp.at(1) - '0';
+		}
+		else {
+			isFailed = true;
+			cerr << "smash error: head: invalid arguments\n";
+			return;
+		}
+	}
+	else {
+		path = string(args[1]);
+	}
+}
+
+int HeadCommand::readLine(int fd, string* buffer) {
+	string str("");
+	char c;
+	int status = 1;
+	
+	do {
+		status = read(fd, &c, sizeof(char));
+		if(status == -1) {
+			perror("smash: read failed");
+			return -1;
+		}
+		
+		if(status < sizeof(char)) { //we've reached EOF
+			break;
+		}
+		
+		str.push_back(c);
+		
+	}
+	while(c != '\n');
+	
+	*buffer = str;
+	return status;
+}
+
+void HeadCommand::execute() {
+	
+	if(isFailed == true) {
+		return;
+	}
+	
+	int fd = open(path.c_str(), O_RDONLY);
+	
+	if(fd == -1) {
+		perror("smash: open failed");
+		return;
+	}
+
+	int cnt = 0;
+	int status;
+	do {
+		string buffer;
+		status = readLine(fd, &buffer);
+		if(status == -1){
+			close(fd);
+			return;
+		}
+		
+		cout << buffer;
+		
+		if(status == 0) {
+			//cout << "\n";
+			close(fd);
+			return;
+		}
+		
+		cnt++;
+	}
+	while(cnt < num_lines);
+	
+	close(fd);
+}
+
 //======================RedirectionCommand Implementation===============
 
 RedirectionCommand::RedirectionCommand(const char* cmd_line
@@ -627,7 +714,7 @@ RedirectionCommand::RedirectionCommand(const char* cmd_line
 		isFailed = true;
 	}
 	else {
-		for(int i = 0; i < red_cmd_args.size(); i++) {
+		for(size_t i = 0; i < red_cmd_args.size(); i++) {
 			red_cmd_args[i] = _trim(red_cmd_args[i]);
 		}
 		
@@ -659,12 +746,22 @@ void RedirectionCommand::execute() {
 	
 	if(fd == -1) {
 		perror("smash: open failed");
+		return;
 	}
 	
 	save_out = dup(fileno(stdout));
 	
-	if( dup2(fd, fileno(stdout)) == -1) {
+	if(save_out == -1) {
+		perror("smash: dup failed");
+		close(fd);
+		return;
+	}
+	
+	if(dup2(fd, fileno(stdout)) == -1) {
 		perror("smash: dup2 failed");
+		close(fd);
+		close(save_out);
+		return;
 	}	
 	
 	Command* command = shell->CreateCommand(red_cmd_args[0].c_str());
@@ -678,6 +775,8 @@ void RedirectionCommand::execute() {
 	
 	if(dup2(save_out, fileno(stdout)) == -1) {
 		perror("smash: dup2 failed");
+		close(save_out);
+		return;
 	}
 	
 	close(save_out);
@@ -741,6 +840,9 @@ Command * SmallShell::CreateCommand(const char* cmd_line) {
     else if (firstWord.compare("quit") == 0) {
         return new QuitCommand(cmd_line, jobsList);
     }
+    else if(firstWord.compare("head") == 0) {
+		return new HeadCommand(cmd_line);
+	}
 	else {
 		return new ExternalCommand(cmd_line, this, jobsList);
 	}

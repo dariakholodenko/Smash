@@ -38,13 +38,14 @@ class BuiltInCommand : public Command {
   virtual ~BuiltInCommand() {}
 };
 
-class ExternalCommand : public Command { //Red
+class ExternalCommand : public Command { 
+ private:
 	SmallShell* shell;
-    JobsList* jl;
+	JobsList* jl;
  public:
-  ExternalCommand(const char *cmd_line, SmallShell* shell, JobsList *jobs);
-  virtual ~ExternalCommand() {}
-  void execute() override;
+	ExternalCommand(const char *cmd_line, SmallShell* shell, JobsList *jobs);
+	virtual ~ExternalCommand() {}
+	void execute() override;
 };
 
 class PipeCommand : public Command {
@@ -188,10 +189,15 @@ public:
 };
 
 class HeadCommand : public BuiltInCommand {
+ private:
+	int num_lines = 10;
+	string path;
+	bool isFailed = false;
+	int readLine(int fd, string* buffer);
  public:
-  HeadCommand(const char* cmd_line);
-  virtual ~HeadCommand() {}
-  void execute() override;
+	HeadCommand(const char* cmd_line);
+	virtual ~HeadCommand() {}
+	void execute() override;
 };
 
 class SmallShell {
