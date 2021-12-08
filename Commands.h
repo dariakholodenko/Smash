@@ -53,9 +53,10 @@ class PipeCommand : public Command {
 };
 
 class RedirectionCommand : public Command {
- // TODO: Add your data members
- public:
-  explicit RedirectionCommand(const char* cmd_line);
+  private: 
+	bool isAppend;
+	char path[COMMAND_ARGS_MAX_LENGTH]; public:
+  explicit RedirectionCommand(const char* cmd_line, bool isAppend);
   virtual ~RedirectionCommand() {}
   void execute() override;
   //void prepare() override;

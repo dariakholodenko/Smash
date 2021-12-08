@@ -7,6 +7,7 @@
 #include <sstream>
 #include <sys/wait.h>
 #include <iomanip>
+#include <fcntl.h>
 #include "Commands.h"
 
 using namespace std;
@@ -201,12 +202,18 @@ ExternalCommand::ExternalCommand(const char *cmd_line,
 }
 												
 void ExternalCommand::execute() {
-
+	//TODO external command works in the foreground, need to
+    //TODO implement background work, all of which are added
+    //TODO to jobs list using addJob(this,pid,isstopped = false)
 	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
 	strcpy(arg, cmd_line);
+	bool isBG = _isBackgroundComamnd(cmd_line);
+	 _removeBackgroundSign(arg);
 	
 	char* const paramlist[] = {"bash", "-c", arg, NULL};
 	int pid = fork();
+	
+	int tempjobId = -1;
 	
 	if(pid == -1) {
 		perror("smash error: Failed forking a child cmd_line\n");
@@ -227,120 +234,43 @@ void ExternalCommand::execute() {
         }
 	}
 	else {
-		int tempjobId = -1;
-		
-		if(_isBackgroundComamnd(cmd_line)) {
-            //TODO fix: we're adding wrong commands to the job list.
+		if(isBG) {
 			tempjobId = jl->addJob(cmd_line, pid, 0);
-			if(tempjobId == -1) perror("smash error: couldn't add a job to list");
+			//cout << "job id = " << tempjobId << endl;
+			//jl->printJobsList();
+			
+			if(tempjobId == -1) {
+				perror("smash error: coudn't add a job to list");
+			}
+		
+//			if(waitpid(pid, NULL, WNOHANG) < 0) {
+//				perror("smash error: waitpid failed");
+//			}
+//            return;
+			//else {
+			//	if(tempjobId != -1) {
+			//	//	jl->removeJobById(tempjobId, cmd_line);
+			//	}
+			//}			
+			
 		}
 		else {
-			shell->setCurrentFGCmd(cmd_line, pid);
-		}
+			shell->setCurrentFGCmd(arg, pid);
 			
-		int status = waitpid(pid, NULL, WUNTRACED);
-        //WUNTRACED in case the child gets stopped.
-        if(status < 0){
-            perror("smash error: waitpid failed");
-        }
-        else {
-			//if(tempjobId != -1) {
-			//	jl->removeJobById(tempjobId, cmd_line);
-			//}
-			shell->setCurrentFGCmd(nullptr, -1);
+			//WUNTRACED in case the child gets stopped.
+			if(waitpid(pid, NULL, WUNTRACED) < 0){
+				perror("smash error: waitpid failed");
+			}
+			else {
+				shell->setCurrentFGCmd(nullptr, -1);
+			}
 		}
 	}
 	
 	free(arg);
+	arg = NULL;
 }											
 							
-
-//===========================SmallShell=================================
-
-SmallShell::SmallShell() 
-		: current_fg_cmd(nullptr), current_fg_cmd_pid(-1), 
-										prompt("smash"), lastPwd("") {
-    jobsList = new JobsList();
-}
-
-SmallShell::~SmallShell() {
-	delete jobsList;
-}
-
-/**
-* Creates and returns a pointer to Command class which matches the given cmd_line line (cmd_line)
-*/
-
-Command * SmallShell::CreateCommand(const char* cmd_line) {
-	
-	string cmd_s = _trim(string(cmd_line));
-	string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
-
-	if (firstWord.compare("chprompt") == 0) {
-        return new ChangePromptCommand(cmd_line, this);
-	}
-	if (firstWord.compare("showpid") == 0) {
-        return new ShowPidCommand(cmd_line);
-	}
-	else if (firstWord.compare("pwd") == 0) {
-        return new GetCurrDirCommand(cmd_line);
-	}
-    else if (firstWord.compare("cd") == 0) {
-        return new ChangeDirCommand(cmd_line, this);
-    }
-    else if (firstWord.compare("jobs") == 0) {
-        return new JobsCommand(cmd_line, jobsList);
-    }
-    else if (firstWord.compare("kill") == 0) {
-        return new KillCommand(cmd_line, jobsList);
-    }
-    else if (firstWord.compare("fg") == 0) {
-        return new ForegroundCommand(cmd_line, jobsList);
-    }
-    else if (firstWord.compare("bg") == 0) {
-        return new BackgroundCommand(cmd_line, jobsList);
-    }
-    else if (firstWord.compare("quit") == 0) {
-        return new QuitCommand(cmd_line, jobsList);
-    }
-
-        //else if ...
-  //.....
-  else {
-    return new ExternalCommand(cmd_line, this, jobsList);
-  }
-  
-  return nullptr;
-}
-
-void SmallShell::executeCommand(const char *cmd_line) {
-	
-	Command* cmd = CreateCommand(cmd_line);
-	
-	if(cmd != nullptr) {
-        cmd->execute();
-	}
-    delete cmd;
-	//Please note that you must fork smash process for some commands (e.g., external commands....)
-}
-
-/*int SmallShell::getLastJobPid() {
-	return jobsList->getLastJobPid();
-}*/
-
-void SmallShell::setCurrentFGCmd(const char* cmd, int pid) {
-	current_fg_cmd = cmd;
-	current_fg_cmd_pid = pid;
-}
-
-int SmallShell::getCurrentFGCmdPid() {
-	return current_fg_cmd_pid;
-}
-
-void SmallShell::addStoppedJob() {
-	jobsList->addJob(current_fg_cmd, current_fg_cmd_pid, 1);
-}
-
 //===========================Built-in Implementation=================================
 
 string SmallShell::getPrompt() {
@@ -491,25 +421,26 @@ void JobsList::killAllJobs() {
 }
 
 void JobsList::removeFinishedJobs() {
-//    int wstatus;
+    int wstatus;
     for (int i = 0; i <  MAX_COMMANDS + 1 ; ++i) {
         if (jobs_list[i].jobId != 0){
             //test signal to see pid is still running in background
-//            int wpid = waitpid(jobs_list[i].pid, &wstatus , WNOHANG | WEXITED);
-//            if (wpid == 0 || wpid == -1) continue;
-//            if (WIFEXITED(wstatus)){
-//                removeJobById(i,"");
-//            }
+            int wpid = waitpid(jobs_list[i].pid, &wstatus , WNOHANG);
+//            cout <<"pid: " << wpid << " status: " << WIFEXITED(wstatus) << endl ;
+            if (wpid == 0) continue;
+            if ((wpid == jobs_list[i].pid && WIFEXITED(wstatus))
+            || (wpid == -1 && errno == ESRCH)){
+                removeJobById(i,"");
+            }
 //            if (waitpid(jobs_list[i].jobId, nullptr, WNOHANG) < 0){
 //                perror("smash error: waitpid failed");
 //                return;
 //            }
-            int status = kill(jobs_list[i].pid, 0);
-
-            if (status == -1 && errno == ESRCH){
-                //this means pid is no longer running
-                removeJobById(i,"");
-            }
+//            int status = kill(jobs_list[i].pid, 0);
+//            if (status == -1 && errno == ESRCH){
+//                //this means pid is no longer running
+//                removeJobById(i,"");
+//            }
         }
     }
 
@@ -661,7 +592,7 @@ QuitCommand::QuitCommand(const char *cmd_line, JobsList *jobs):
 }
 
 void QuitCommand::execute() {
-//    jl->removeFinishedJobs();
+    jl->removeFinishedJobs();
     if (num_args > 1){
         //kill argument may be passed
         if (strcmp(args[1], "kill") == 0){
@@ -672,4 +603,146 @@ void QuitCommand::execute() {
     }
     //if kill was not sent
     exit(1);
+}
+
+//======================RedirectionCommand Implementation===============
+
+RedirectionCommand::RedirectionCommand(const char* cmd_line
+			, bool isAppend): Command(cmd_line), isAppend(isAppend) {
+	
+	if(strcmp(args[num_args], "&")) {
+		strcpy(path, args[num_args-1]);
+	}
+	else {
+		strcpy(path, args[num_args]);
+	}
+}
+
+void RedirectionCommand::execute() {
+	int file;
+	
+	if(isAppend == true) {
+		file = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
+	}
+	else {
+		file = open(path, O_WRONLY | O_CREAT , 0666);
+	}
+	
+	if(file == -1) {
+		perror("smash: open failed");
+	}
+	
+	int fd = dup2(STDOUT_FILENO, file);
+	
+	if(fd == -1) {
+		perror("smash: dup2 failed");
+	}
+	
+	//inner command execution - Under constraction
+	
+	if(close(file) == -1) {
+		perror("smash: close failed");
+	}
+	
+	if(close(fd) == -1) {
+		perror("smash: close failed");
+	}
+}
+//===========================SmallShell=================================
+
+SmallShell::SmallShell() 
+		: current_fg_cmd(nullptr), current_fg_cmd_pid(-1), 
+										prompt("smash"), lastPwd("") {
+    jobsList = new JobsList();
+}
+
+SmallShell::~SmallShell() {
+	delete jobsList;
+	jobsList = nullptr;
+}
+
+/**
+* Creates and returns a pointer to Command class which matches the given command line (cmd_line)
+*/
+
+Command * SmallShell::CreateCommand(const char* cmd_line) {
+	
+	string cmd_s = _trim(string(cmd_line));
+	string firstWord = cmd_s.substr(0, cmd_s.find_first_of(" \n"));
+	
+	size_t idx = ((string)cmd_line).find_first_of('>');
+	
+	
+	if(idx != std::string::npos) {
+		bool isAppend = false;
+		if(cmd_line[idx+1] == '>') {
+			isAppend = true;
+		}
+		return new RedirectionCommand(cmd_line, isAppend);
+	}
+	else if (firstWord.compare("chprompt") == 0) {
+        return new ChangePromptCommand(cmd_line, this);
+	}
+	else if (firstWord.compare("showpid") == 0) {
+        return new ShowPidCommand(cmd_line);
+	}
+	else if (firstWord.compare("pwd") == 0) {
+        return new GetCurrDirCommand(cmd_line);
+	}
+    else if (firstWord.compare("cd") == 0) {
+        return new ChangeDirCommand(cmd_line, this);
+    }
+    else if (firstWord.compare("jobs") == 0) {
+        return new JobsCommand(cmd_line, jobsList);
+    }
+    else if (firstWord.compare("kill") == 0) {
+        return new KillCommand(cmd_line, jobsList);
+    }
+    else if (firstWord.compare("fg") == 0) {
+        return new ForegroundCommand(cmd_line, jobsList);
+    }
+    else if (firstWord.compare("bg") == 0) {
+        return new BackgroundCommand(cmd_line, jobsList);
+    }
+    else if (firstWord.compare("quit") == 0) {
+        return new QuitCommand(cmd_line, jobsList);
+    }
+
+        //else if ...
+  //.....
+  else {
+    return new ExternalCommand(cmd_line, this, jobsList);
+  }
+  
+  return nullptr;
+}
+
+void SmallShell::executeCommand(const char *cmd_line) {
+	
+	Command* cmd = CreateCommand(cmd_line);
+	
+	if(cmd != nullptr) {
+        cmd->execute();
+	}
+	
+    delete cmd;
+    cmd = nullptr;
+	//Please note that you must fork smash process for some commands (e.g., external commands....)
+}
+
+/*int SmallShell::getLastJobPid() {
+	return jobsList->getLastJobPid();
+}*/
+
+void SmallShell::setCurrentFGCmd(const char * cmd, int pid) {
+	current_fg_cmd = cmd;
+	current_fg_cmd_pid = pid;
+}
+
+int SmallShell::getCurrentFGCmdPid() {
+	return current_fg_cmd_pid;
+}
+
+void SmallShell::addStoppedJob() {
+	jobsList->addJob(current_fg_cmd, current_fg_cmd_pid, 1);
 }
