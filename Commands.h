@@ -214,7 +214,7 @@ class SmallShell {
   int pid;
   SmallShell();
  public:
- JobsList* jobsList;
+ //JobsList* jobsList;
   Command *CreateCommand(const char* cmd_line);
   SmallShell(SmallShell const&)      = delete; // disable copy ctor
   void operator=(SmallShell const&)  = delete; // disable = operator
@@ -231,7 +231,7 @@ class SmallShell {
   string getLastPwd();
   int getPid(){
       return pid;
-  }
+	}
   void setLastPwd(string new_last_pwd);
   void setCurrentFGCmd(const char* cmd, int pid);
   int getCurrentFGCmdPid();

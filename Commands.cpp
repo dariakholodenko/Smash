@@ -208,16 +208,20 @@ ExternalCommand::ExternalCommand(const char *cmd_line,
 												
 void ExternalCommand::execute() {
   
-	char* arg = (char*)malloc((sizeof(cmd_line)+1)/sizeof(char));
-	strcpy(arg, cmd_line);
 	bool isBG = _isBackgroundComamnd(cmd_line);
+	
+	char* arg = (char*)malloc(strlen(cmd_line)+1);
+	strcpy(arg, cmd_line);
+	
 	 _removeBackgroundSign(arg);
+	 string ext_args = (string(arg));
   
   //this way we don't get warnings about convertion
-  char* const bash = strdup("bash");
+	/*char* const bash = strdup("bash");
 	char* const flag = strdup("-c");
-	char* const paramlist[] = {bash, flag, arg, NULL};
-
+	char* const args = strdup(ext_args.c_str());
+	char* const paramlist[] = {bash, flag, args, NULL};*/
+	
 	int pid = fork();
 	
 	int tempjobId = -1;
@@ -236,7 +240,7 @@ void ExternalCommand::execute() {
         }
         
 		setpgrp();
-		execvp("/bin/bash", paramlist);
+		execlp("/bin/bash", "bash", "-c", ext_args.c_str());
 		
 		perror("smash error: executioin failed\n");
 
@@ -260,7 +264,7 @@ void ExternalCommand::execute() {
 			
 		}
 		else {
-			shell->setCurrentFGCmd(arg, pid);
+			shell->setCurrentFGCmd(args[0], pid);
 			
 			//WUNTRACED in case the child gets stopped.
 			if(waitpid(pid, NULL, WUNTRACED) < 0){
@@ -272,6 +276,9 @@ void ExternalCommand::execute() {
 		}
 	}
 	
+	/*free(bash);
+	free(flag);
+	free(args);*/
 	free(arg);
 	arg = NULL;
 }											
@@ -395,15 +402,6 @@ JobsList::JobEntry *JobsList::getLastJob(int *lastJobId) {
     return nullptr;
 }
 
-/*int JobsList::getLastJobPid() {
-    for (int i = MAX_COMMANDS; i > 0 ; --i) {
-        if (jobs_list[i].jobId != 0){
-            return jobs_list[i].pid;
-        }
-    }
-    return -1;
-}*/
-
 JobsList::JobEntry *JobsList::getLastStoppedJob(int *jobId) {
     for (int i = MAX_COMMANDS; i > 0 ; --i) {
         if (jobs_list[i].jobId != 0 && jobs_list->isStopped){
@@ -436,7 +434,7 @@ void JobsList::removeFinishedJobs() {
             if (wpid == 0) continue;
             if ((wpid == jobs_list[i].pid && WIFEXITED(wstatus))
             || (wpid == -1 && errno == ESRCH)){
-                perror("smash error: waitpid failed");
+                //perror("smash error: waitpid failed");
                 removeJobById(i,"");
             }
 //            if (waitpid(jobs_list[i].jobId, nullptr, WNOHANG) < 0){
@@ -509,7 +507,7 @@ void KillCommand::execute() {
         return;
     } else{
         cout << "signal number " << str_sig_num
-        << "was sent to pid " << je->pid << endl;
+        << " was sent to pid " << je->pid << endl;
     }
 }
 //===========================Foreground and Background commands Implementation=================================
@@ -606,7 +604,7 @@ void QuitCommand::execute() {
         //kill argument may be passed
         if (strcmp(args[1], "kill") == 0){
             cout << "smash: sending SIGKILL signal to " << jl->getNumEntries()
-            << " jobs";
+            << " jobs:\n";
             jl->killAllJobs();
         }
     }
@@ -635,9 +633,9 @@ HeadCommand::HeadCommand(const char* cmd_line)
 		string temp = string(args[1]);
 		temp = _trim(temp);
 		
-		if(temp.length() >1 && temp.at(0) == '-') {
+		if(temp.length() > 1 && temp.at(0) == '-') {
 			
-			num_lines = temp.at(1) - '0';
+			num_lines = abs(stoi(temp));
 		}
 		else {
 			isFailed = true;
@@ -659,7 +657,7 @@ int HeadCommand::readLine(int fd, string* buffer) {
 	do {
 		status = read(fd, &c, sizeof(char));
 		if(status == -1) {
-			perror("smash: read failed");
+			perror("smash error: read failed");
 			return -1;
 		}
 		
@@ -686,7 +684,7 @@ void HeadCommand::execute() {
 	int fd = open(path.c_str(), O_RDONLY);
 	
 	if(fd == -1) {
-		perror("smash: open failed");
+		perror("smash error: open failed");
 		return;
 	}
 
@@ -779,20 +777,20 @@ void RedirectionCommand::execute() {
 	}
 	
 	if(fd == -1) {
-		perror("smash: open failed");
+		perror("smash error: open failed");
 		return;
 	}
 	
 	save_out = dup(fileno(stdout));
 	
 	if(save_out == -1) {
-		perror("smash: dup failed");
+		perror("smash error: dup failed");
 		close(fd);
 		return;
 	}
 	
 	if(dup2(fd, fileno(stdout)) == -1) {
-		perror("smash: dup2 failed");
+		perror("smash error: dup2 failed");
 		close(fd);
 		//close(save_out);
 		return;
@@ -808,7 +806,7 @@ void RedirectionCommand::execute() {
 	close(fd);
 	
 	if(dup2(save_out, fileno(stdout)) == -1) {
-		perror("smash: dup2 failed");
+		perror("smash error: dup2 failed");
 		close(save_out);
 		return;
 	}
@@ -1045,8 +1043,10 @@ void SmallShell::executeCommand(const char *cmd_line) {
     cmd = nullptr;
 }
 
-void SmallShell::setCurrentFGCmd(Command* cmd, int pid) {
+void SmallShell::setCurrentFGCmd(const char* cmd, int pid) {
 	current_fg_cmd = cmd;
+	//(char*)malloc(strlen(cmd)+1);
+	//strcpy(current_fg_cmd, cmd);
 	current_fg_cmd_pid = pid;
 }
 
