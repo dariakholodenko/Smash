@@ -109,11 +109,14 @@ class ShowPidCommand : public BuiltInCommand {
 };
 
 class JobsList {
-    //assuming only 100 jobs, we'll use an array
  public:
   class JobEntry {
   public:
       JobEntry() = default;
+      JobEntry(int jobId, string cmd_line, int pid, time_t  startTime,
+               bool isStopped = false):jobId(jobId), cmd_line(cmd_line),
+               pid(pid), startTime(time(nullptr)), isStopped(isStopped){
+      }
       ~JobEntry() = default;
       int jobId;
       string cmd_line;
@@ -124,17 +127,14 @@ class JobsList {
   };
 
 private:
-    //if job id is 0 => no running job at [i] location
-    JobEntry jobs_list[MAX_COMMANDS +1];
-    int num_entries;
+    vector<JobEntry> jobs_list;
  public:
   JobsList();
   ~JobsList();
   int getNumEntries(){
-      return num_entries;
+      return jobs_list.size();
   }
-  
-  int addJob(const char *cmd, int pid, bool isStopped = false);
+  int addJob(const char *cmd, int pid, bool isStopped = false, int jid = 0);
   void printJobsList();
   void killAllJobs();
   void removeFinishedJobs();
@@ -206,13 +206,14 @@ class HeadCommand : public BuiltInCommand {
 class SmallShell {
 
  private:
-  const char * current_fg_cmd;
-  int current_fg_cmd_pid;
-  JobsList* jobsList;
-  string prompt;
-  string lastPwd;
-  int pid;
-  SmallShell();
+    const char * current_fg_cmd;
+    int current_fg_cmd_pid;
+     int current_fg_cmd_jid;
+     JobsList* jobsList;
+     string prompt;
+     string lastPwd;
+     int pid;
+    SmallShell();
  public:
  //JobsList* jobsList;
   Command *CreateCommand(const char* cmd_line);
@@ -233,9 +234,18 @@ class SmallShell {
       return pid;
 	}
   void setLastPwd(string new_last_pwd);
-  void setCurrentFGCmd(const char* cmd, int pid);
-  int getCurrentFGCmdPid();
-  void addStoppedJob();
+  void setCurrentFGCmd(const char* cmd, int pid, int jid);
+  const char* getCurrentFGCmdLine(){
+        return current_fg_cmd;
+    }
+    int getCurrentFGCmdPid();
+    int getCurrentFGCmdJid(){
+        return current_fg_cmd_jid;
+    }
+    void addStoppedJob();
+    JobsList* getJobsList(){
+        return jobsList;
+    }
 
 };
 

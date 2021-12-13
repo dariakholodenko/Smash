@@ -18,7 +18,7 @@ void ctrlZHandler(int sig_num) {
     if(pid != -1) { 
 		kill(pid, SIGSTOP);
 		smash.addStoppedJob();
-		smash.setCurrentFGCmd(nullptr, -1);
+		smash.setCurrentFGCmd(NULL, -1, -1);
 		cout << "smash: process " << pid << " was stopped\n";
 	}
 }
@@ -38,8 +38,6 @@ void ctrlCHandler(int sig_num) {
 	}
 }
 
-void alarmHandler(int sig_num) { 
-	//TODO implement sig_alarm
-}
+void alarmHandler(int sig_num) {}
 
 
