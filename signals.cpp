@@ -27,14 +27,10 @@ void ctrlCHandler(int sig_num) {
     cout << "smash: got ctrl-C\n";
     SmallShell& smash = SmallShell::getInstance();
     int pid = smash.getCurrentFGCmdPid();
-    
+    smash.setCurrentFGCmd(NULL, -1, -1);
     if(pid != -1) { 
 		kill(pid, SIGKILL);
 		cout << "smash: process " << pid << " was killed\n";
-	}
-	else { //temporarily for debug as alternative for regular ctr-c
-		pid = getpid();
-		kill(pid, SIGKILL); 
 	}
 }
 
